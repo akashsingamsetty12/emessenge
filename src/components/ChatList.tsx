@@ -75,16 +75,17 @@ export const ChatList = ({ onOpenSettings, onAddContact }: ChatListProps) => {
 
       <div className="flex-1 overflow-y-auto px-2 space-y-1">
         {contacts.length === 0 ? (
-          <div className="h-40 flex flex-col items-center justify-center text-zinc-600 px-8 text-center">
+          <div className="h-40 flex flex-col items-center justify-center text-zinc-600 px-8 text-center animate-fade-in">
             <p className="text-xs font-mono uppercase tracking-widest mb-2">No Connections</p>
             <p className="text-[10px]">Add a friend's ID to establish an E2EE handshake.</p>
           </div>
         ) : (
-          contacts.map((contact) => (
+          contacts.map((contact, index) => (
             <div
               key={contact.id}
               onClick={() => setActiveChatId(contact.id)}
-              className={`group p-4 flex items-center cursor-pointer rounded-2xl transition-all duration-200 ${
+              style={{ animationDelay: `${index * 0.05}s` }}
+              className={`group p-4 flex items-center cursor-pointer rounded-2xl transition-all duration-200 animate-slide-in-right opacity-0 ${
                 activeChatId === contact.id 
                   ? 'bg-zinc-900 shadow-lg shadow-black/20' 
                   : 'hover:bg-zinc-900/40'

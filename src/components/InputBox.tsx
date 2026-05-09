@@ -12,14 +12,23 @@ interface InputBoxProps {
 
 export function InputBox({ onSend, onTyping, replyingTo, onCancelReply }: InputBoxProps) {
   const [text, setText] = useState('');
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const emojis = ['😊', '😂', '❤️', '👍', '🔥', '✨', '🙌', '🎉', '😎', '🤔', '😢', '😍', '👋', '🙏', '💯', '🚀'];
 
   useEffect(() => {
     if (replyingTo) {
       inputRef.current?.focus();
     }
   }, [replyingTo]);
+
+  const handleEmojiClick = (emoji: string) => {
+    setText(prev => prev + emoji);
+    setShowEmojiPicker(false);
+    inputRef.current?.focus();
+  };
 
   const handleSend = () => {
     if (text.trim()) {
@@ -65,9 +74,9 @@ export function InputBox({ onSend, onTyping, replyingTo, onCancelReply }: InputB
   };
 
   return (
-    <div className="bg-zinc-900/30 backdrop-blur-xl border-t border-white/5 sticky bottom-0 z-20">
+    <div className="glass-morphism sticky bottom-0 z-20 mx-4 mb-4 rounded-3xl overflow-hidden shadow-2xl border border-white/10 animate-fade-in">
       {replyingTo && (
-        <div className="max-w-4xl mx-auto px-4 py-2 border-b border-white/5 bg-purple-500/5 animate-in slide-in-from-bottom-2 duration-300 flex items-center justify-between">
+        <div className="px-4 py-2 border-b border-white/5 bg-purple-500/10 animate-scale-in flex items-center justify-between">
           <div className="flex items-center gap-3 overflow-hidden">
             <div className="text-purple-400">
               <Reply size={16} />
@@ -88,10 +97,10 @@ export function InputBox({ onSend, onTyping, replyingTo, onCancelReply }: InputB
         </div>
       )}
       
-      <div className="p-4 flex items-center gap-2 max-w-4xl mx-auto">
+      <div className="p-3 flex items-center gap-2">
         <button 
           onClick={() => fileInputRef.current?.click()}
-          className="p-3 text-zinc-400 hover:text-white hover:bg-white/5 rounded-2xl transition-all"
+          className="p-3 text-zinc-400 hover:text-white hover:bg-white/5 rounded-2xl transition-all active:scale-90"
         >
           <Paperclip size={20} />
         </button>
@@ -103,10 +112,23 @@ export function InputBox({ onSend, onTyping, replyingTo, onCancelReply }: InputB
           onChange={handleFileChange}
         />
         
-        <div className="relative flex-1 flex items-center bg-black/50 rounded-2xl border border-white/5 focus-within:ring-2 focus-within:ring-purple-500/50 transition-all">
+        <div className="relative flex-1 flex items-center bg-black/40 rounded-2xl border border-white/5 focus-within:ring-2 focus-within:ring-purple-500/50 transition-all">
+          {showEmojiPicker && (
+            <div className="absolute bottom-full left-0 mb-4 p-3 bg-zinc-900/90 backdrop-blur-2xl rounded-3xl border border-white/10 shadow-2xl grid grid-cols-4 gap-2 animate-scale-in z-50">
+              {emojis.map(emoji => (
+                <button
+                  key={emoji}
+                  onClick={() => handleEmojiClick(emoji)}
+                  className="w-10 h-10 flex items-center justify-center hover:bg-white/10 rounded-xl transition-all active:scale-90 text-xl"
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          )}
           <button 
             onClick={handleLocation}
-            className="pl-4 pr-2 text-zinc-400 hover:text-purple-400 transition-all"
+            className="pl-4 pr-2 text-zinc-400 hover:text-purple-400 transition-all active:scale-90"
             title="Share Location"
           >
             <MapPin size={18} />
@@ -114,16 +136,23 @@ export function InputBox({ onSend, onTyping, replyingTo, onCancelReply }: InputB
           <input
             type="text"
             ref={inputRef}
-            placeholder="Message..."
+            placeholder="Type a message..."
             value={text}
             onChange={(e) => {
               setText(e.target.value);
               onTyping(e.target.value.length > 0);
             }}
-            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-            className="w-full bg-transparent text-white px-2 py-3.5 text-sm focus:outline-none"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleSend();
+              setShowEmojiPicker(false);
+            }}
+            onFocus={() => setShowEmojiPicker(false)}
+            className="w-full bg-transparent text-white px-2 py-3 text-sm focus:outline-none"
           />
-          <button className="pr-4 text-zinc-500 hover:text-purple-400">
+          <button 
+            onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+            className={`pr-4 transition-colors ${showEmojiPicker ? 'text-purple-400' : 'text-zinc-500 hover:text-purple-400'}`}
+          >
              <Smile size={18} />
           </button>
         </div>
@@ -131,7 +160,7 @@ export function InputBox({ onSend, onTyping, replyingTo, onCancelReply }: InputB
         <button
           onClick={handleSend}
           disabled={!text.trim()}
-          className="p-3.5 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-2xl hover:scale-105 active:scale-95 transition-all shadow-lg shadow-purple-500/20 disabled:opacity-50 disabled:grayscale"
+          className="p-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-2xl hover:scale-105 active:scale-95 transition-all shadow-xl shadow-purple-500/20 disabled:opacity-50 disabled:grayscale"
         >
           <Send size={20} />
         </button>

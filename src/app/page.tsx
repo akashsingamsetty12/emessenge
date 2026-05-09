@@ -539,15 +539,16 @@ export default function Home() {
         profilePic: newProfilePic
       });
 
-      // Also notify active chat partner immediately
-      if (activeChatId) {
+      // Notify all known contacts immediately so they see the new profile pic
+      const contacts = useChatStore.getState().contacts;
+      contacts.forEach(contact => {
         socket.emit('identity_broadcast', { 
-          to: activeChatId, 
+          to: contact.id, 
           publicKey: currentUser.publicKey, 
           username: newUsername.trim(),
           profilePic: newProfilePic
         });
-      }
+      });
     }
     setIsSettingsOpen(false);
   };

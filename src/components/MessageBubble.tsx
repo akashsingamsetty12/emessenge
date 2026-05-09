@@ -21,6 +21,7 @@ export function MessageBubble({
   onDelete, onReply 
 }: MessageBubbleProps) {
   const [showOptions, setShowOptions] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   const OptionsMenu = () => (
     <div className={`absolute top-0 ${isMe ? '-left-28' : '-right-28'} flex flex-col gap-1 z-20 animate-in fade-in slide-in-from-top-1 duration-200`}>
@@ -62,19 +63,37 @@ export function MessageBubble({
   if (content.startsWith('data:image')) {
     return (
       <div 
-        className={`flex ${isMe ? 'justify-end' : 'justify-start'} group mb-4 relative`}
+        className={`flex ${isMe ? 'justify-end' : 'justify-start'} group mb-4 relative animate-scale-in`}
         onMouseEnter={() => setShowOptions(true)}
         onMouseLeave={() => setShowOptions(false)}
       >
-        <div className={`max-w-[80%] rounded-2xl p-1 shadow-lg relative ${isMe ? 'bg-purple-600' : 'bg-zinc-800'}`}>
+        <div className={`max-w-[80%] rounded-2xl p-1 shadow-2xl relative chat-bubble-shadow ${isMe ? 'bg-purple-600' : 'bg-zinc-800'}`}>
           <ReplyPreview />
-          <img src={content} alt="Shared media" className="rounded-xl max-w-full h-auto" />
+          <div 
+            onClick={() => setIsFullscreen(true)}
+            className="w-48 h-48 rounded-xl overflow-hidden cursor-pointer hover:opacity-90 transition-opacity"
+          >
+            <img src={content} alt="Shared" className="w-full h-full object-cover" />
+          </div>
           <div className="px-2 py-1 flex justify-end gap-1 opacity-60">
              <span className="text-[9px]">{new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
              {isMe && status === 'read' && <CheckCheck size={10} className="text-blue-300" />}
           </div>
           {showOptions && <OptionsMenu />}
         </div>
+
+        {isFullscreen && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 animate-fade-in">
+            <div className="absolute inset-0 bg-black/95 backdrop-blur-xl" onClick={() => setIsFullscreen(false)}></div>
+            <img src={content} className="relative max-w-full max-h-full rounded-2xl shadow-2xl animate-scale-in" />
+            <button 
+              onClick={() => setIsFullscreen(false)}
+              className="absolute top-6 right-6 p-3 bg-white/10 hover:bg-white/20 rounded-full text-white backdrop-blur transition-all"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -82,18 +101,22 @@ export function MessageBubble({
   if (content.startsWith('data:video')) {
     return (
       <div 
-        className={`flex ${isMe ? 'justify-end' : 'justify-start'} group mb-4 relative`}
+        className={`flex ${isMe ? 'justify-end' : 'justify-start'} group mb-4 relative animate-scale-in`}
         onMouseEnter={() => setShowOptions(true)}
         onMouseLeave={() => setShowOptions(false)}
       >
-        <div className={`max-w-[80%] rounded-2xl p-1 shadow-lg relative ${isMe ? 'bg-purple-600' : 'bg-zinc-800'}`}>
+        <div className={`max-w-[80%] rounded-2xl p-1 shadow-2xl relative chat-bubble-shadow ${isMe ? 'bg-purple-600' : 'bg-zinc-800'}`}>
           <ReplyPreview />
-          <div className="relative overflow-hidden rounded-xl bg-black border border-white/5">
-            <video 
-              src={content} 
-              controls 
-              className="max-w-full h-auto max-h-[400px] block"
-            />
+          <div 
+            onClick={() => setIsFullscreen(true)}
+            className="w-48 h-48 rounded-xl overflow-hidden cursor-pointer hover:opacity-90 transition-opacity bg-black relative group"
+          >
+            <video src={content} className="w-full h-full object-cover" />
+            <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-all">
+              <div className="w-12 h-12 bg-white/20 backdrop-blur rounded-full flex items-center justify-center text-white border border-white/20">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              </div>
+            </div>
           </div>
           <div className="px-2 py-1 flex justify-end gap-1 opacity-60">
              <span className="text-[9px]">{new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
@@ -101,6 +124,24 @@ export function MessageBubble({
           </div>
           {showOptions && <OptionsMenu />}
         </div>
+
+        {isFullscreen && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 animate-fade-in">
+            <div className="absolute inset-0 bg-black/95 backdrop-blur-xl" onClick={() => setIsFullscreen(false)}></div>
+            <video 
+              src={content} 
+              controls 
+              autoPlay
+              className="relative max-w-full max-h-full rounded-2xl shadow-2xl animate-scale-in" 
+            />
+            <button 
+              onClick={() => setIsFullscreen(false)}
+              className="absolute top-6 right-6 p-3 bg-white/10 hover:bg-white/20 rounded-full text-white backdrop-blur transition-all"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -108,11 +149,11 @@ export function MessageBubble({
   if (content.startsWith('data:audio')) {
     return (
       <div 
-        className={`flex ${isMe ? 'justify-end' : 'justify-start'} group mb-4 relative`}
+        className={`flex ${isMe ? 'justify-end' : 'justify-start'} group mb-4 relative animate-scale-in`}
         onMouseEnter={() => setShowOptions(true)}
         onMouseLeave={() => setShowOptions(false)}
       >
-        <div className={`max-w-[80%] rounded-2xl p-3 shadow-lg relative ${isMe ? 'bg-purple-600' : 'bg-zinc-800'}`}>
+        <div className={`max-w-[80%] rounded-2xl p-3 shadow-2xl relative chat-bubble-shadow ${isMe ? 'bg-purple-600' : 'bg-zinc-800'}`}>
           <ReplyPreview />
           <div className="flex items-center gap-3 bg-black/20 p-2 rounded-xl border border-white/5">
             <audio 
@@ -135,11 +176,11 @@ export function MessageBubble({
     const coords = content.replace('LOC:', '');
     return (
       <div 
-        className={`flex ${isMe ? 'justify-end' : 'justify-start'} group mb-4 relative`}
+        className={`flex ${isMe ? 'justify-end' : 'justify-start'} group mb-4 relative animate-scale-in`}
         onMouseEnter={() => setShowOptions(true)}
         onMouseLeave={() => setShowOptions(false)}
       >
-        <div className={`max-w-[80%] rounded-2xl shadow-lg overflow-hidden border border-white/5 relative ${isMe ? 'bg-purple-600' : 'bg-zinc-800'}`}>
+        <div className={`max-w-[80%] rounded-2xl shadow-2xl overflow-hidden border border-white/5 relative chat-bubble-shadow ${isMe ? 'bg-purple-600' : 'bg-zinc-800'}`}>
           <ReplyPreview />
           <a 
             href={`https://www.google.com/maps?q=${coords}`}
@@ -160,11 +201,11 @@ export function MessageBubble({
 
   return (
     <div 
-      className={`flex ${isMe ? 'justify-end' : 'justify-start'} group mb-4 relative`}
+      className={`flex ${isMe ? 'justify-end' : 'justify-start'} group mb-4 relative animate-scale-in`}
       onMouseEnter={() => setShowOptions(true)}
       onMouseLeave={() => setShowOptions(false)}
     >
-      <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 shadow-lg relative ${isMe ? 'bg-purple-600 text-white rounded-tr-none' : 'bg-zinc-800 text-zinc-100 rounded-tl-none'}`}>
+      <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 shadow-2xl relative chat-bubble-shadow ${isMe ? 'bg-purple-600 text-white rounded-tr-none' : 'bg-zinc-800 text-zinc-100 rounded-tl-none'}`}>
         <ReplyPreview />
         <p className="text-sm leading-relaxed whitespace-pre-wrap">{content}</p>
         <div className={`flex items-center gap-1 mt-1 opacity-60 ${isMe ? 'justify-end' : 'justify-start'}`}>

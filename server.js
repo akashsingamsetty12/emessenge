@@ -17,6 +17,9 @@ const offlineMessages = new Map(); // normalizedId -> [{ from, content, timestam
 const normalize = (id) => id ? id.replace(/\D/g, '') : '';
 
 io.on("connection", (socket) => {
+  const clientIp = socket.handshake.address;
+  console.log(`[Connect] New connection attempt from IP: ${clientIp}`);
+  
   const rawUserId = socket.handshake.query.userId;
   const userId = normalize(rawUserId);
   
@@ -70,11 +73,13 @@ io.on("connection", (socket) => {
   socket.on("identity_broadcast", ({ to, publicKey, username, profilePic }) => {
     const targetId = normalize(to);
     const targetSocketId = users.get(targetId);
+    const msg = { type: 'identity', from: rawUserId, publicKey, username, profilePic, content: { publicKey, username, profilePic } };
+    
     if (targetSocketId) {
-      io.to(targetSocketId).emit("identity_broadcast", { from: rawUserId, publicKey, username, profilePic });
+      io.to(targetSocketId).emit("message_relay", msg);
     } else {
       if (!offlineMessages.has(targetId)) offlineMessages.set(targetId, []);
-      offlineMessages.get(targetId).push({ type: 'identity', from: rawUserId, publicKey, username, profilePic });
+      offlineMessages.get(targetId).push(msg);
     }
   });
 
@@ -100,6 +105,6 @@ io.on("connection", (socket) => {
 });
 
 const PORT = 3001;
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, "0.0.0.0", () => {
   console.log(`Signaling server running on port ${PORT}`);
 });

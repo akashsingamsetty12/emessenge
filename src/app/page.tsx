@@ -10,7 +10,7 @@ import { ChatList } from '@/components/ChatList';
 import { MessageBubble } from '@/components/MessageBubble';
 import { InputBox } from '@/components/InputBox';
 import { auth, RecaptchaVerifier, signInWithPhoneNumber, ConfirmationResult } from '@/lib/firebase';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { UserX } from 'lucide-react';
 
 export default function Home() {
@@ -23,9 +23,18 @@ export default function Home() {
   const [isOtpSent, setIsOtpSent] = useState(false);
   const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
   const [targetIdInput, setTargetIdInput] = useState('');
-  const [isInitializing, setIsInitializing] = useState(true);
+  const [isInitializing, setIsInitializing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   
+  // Call States
+  const [callStatus, setCallStatus] = useState<'idle' | 'calling' | 'ringing' | 'active'>('idle');
+  const [callType, setCallType] = useState<'voice' | 'video'>('voice');
+  const [incomingCall, setIncomingCall] = useState<{ from: string, type: 'voice' | 'video', signal: any } | null>(null);
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const peerConnection = useRef<RTCPeerConnection | null>(null);
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const sharedSecrets = useRef<{ [key: string]: string }>({});
   const secretsDerivedFor = useRef<string>(''); // Stores currentUser.id + contacts version
@@ -49,6 +58,18 @@ export default function Home() {
     activeChatIdRef.current = activeChatId;
   }, [activeChatId]);
 
+  const [isConnected, setIsConnected] = useState(false);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const socket = getSocket();
+      if (socket?.connected !== isConnected) {
+        setIsConnected(!!socket?.connected);
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isConnected]);
+
   useEffect(() => {
     currentUserRef.current = currentUser;
   }, [currentUser]);
@@ -56,31 +77,26 @@ export default function Home() {
   useEffect(() => {
     let isMounted = true;
 
-    initSodium().then(() => {
+    const init = async () => {
       if (!isMounted) return;
 
-      // Load saved contacts with their latest messages
-      getContacts().then(async (saved: Contact[]) => {
-        if (!isMounted) return;
-        if (saved && saved.length > 0) {
-          const contactsWithMessages = await Promise.all(saved.map(async (c) => {
-            const msgs = await getMessagesForChat(c.id);
-            const last = msgs[msgs.length - 1];
-            return {
-              ...c,
-              lastMessage: last?.content,
-              lastMessageTime: last?.timestamp,
-              unreadCount: msgs.filter(m => m.status !== 'read' && normalize(m.senderId) === normalize(c.id)).length
-            };
-          }));
-          if (isMounted) setContacts(contactsWithMessages);
-        }
-      });
+      console.log('[Init] Initializing Sodium...');
+      await initSodium();
+      console.log('[Init] Sodium ready.');
+
+      // Load contacts quickly without full message history
+      const saved = await getContacts();
+      if (saved && saved.length > 0 && isMounted) {
+        console.log('[Init] Loading contacts:', saved.length);
+        setContacts(saved);
+      }
 
       try {
+        console.log('[Init] Checking Auth State...');
         onAuthStateChanged(auth, async (user) => {
           if (!isMounted) return;
           if (user && user.phoneNumber) {
+            console.log('[Init] Auth success:', user.phoneNumber);
             const phoneId = user.phoneNumber;
             let publicKey = await getKey(`${phoneId}_public`);
             let privateKey = await getKey(`${phoneId}_private`);
@@ -88,7 +104,7 @@ export default function Home() {
             let savedProfilePic = await getKey(`${phoneId}_profile_pic`);
 
             if (!publicKey || !privateKey) {
-              console.log('[Security] No local keys found for authenticated user. Generating new pair...');
+              console.log('[Init] Generating new security keys...');
               const keyPair = generateKeyPair();
               publicKey = keyPair.publicKey;
               privateKey = keyPair.privateKey;
@@ -113,14 +129,21 @@ export default function Home() {
               const socket = initSocket(restoredUser.id);
               setupSocketListeners(socket, restoredUser);
             }
+          } else {
+            console.log('[Init] No session found.');
           }
-          if (isMounted) setIsInitializing(false);
+          if (isMounted) {
+            console.log('[Init] Startup finished.');
+            setIsInitializing(false);
+          }
         });
       } catch (error) {
-        console.error("Firebase Auth failed to initialize:", error);
+        console.error("[Init] Critical failure:", error);
         if (isMounted) setIsInitializing(false);
       }
-    });
+    };
+
+    init();
 
     return () => {
       isMounted = false;
@@ -227,6 +250,16 @@ export default function Home() {
         username: initialUser.username,
         profilePic: initialUser.profilePic
       });
+
+      // Aggressive Sync: Tell all contacts who I am
+      contacts.forEach(contact => {
+        socket.emit('identity_broadcast', {
+          to: contact.id,
+          publicKey: initialUser.publicKey,
+          username: initialUser.username,
+          profilePic: initialUser.profilePic
+        });
+      });
     };
 
     socket.on('connect', register);
@@ -259,7 +292,8 @@ export default function Home() {
     console.log(`[Incoming] ${type || 'message'} from ${from}`);
 
     if (type === 'identity') {
-      if (currentUser) handleIdentityReceived(from, content || payload, currentUser);
+      const user = currentUserRef.current;
+      if (user) handleIdentityReceived(from, payload, user);
       return;
     }
 
@@ -289,9 +323,12 @@ export default function Home() {
       return;
     }
 
-    if (type === 'identity_broadcast') {
+    if (type === 'identity' || type === 'identity_broadcast') {
       const user = currentUserRef.current;
-      if (user) handleIdentityReceived(from, content, user);
+      if (user) {
+        console.log(`[Sync] Received identity from ${from}:`, payload.username);
+        handleIdentityReceived(from, payload, user);
+      }
       return;
     }
 
@@ -348,50 +385,71 @@ export default function Home() {
       }
 
       console.log(`[Decryption] Success: "${finalContent.slice(0, 10)}..." from ${from}`);
+      
+      const msgId = payload.id || id || `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
       const msg: Message = {
-        id: id || uuidv4(),
+        id: msgId,
         senderId: from,
         receiverId: user.id,
         chatId: from,
         content: finalContent,
         type: type,
-        timestamp: timestamp || Date.now(),
+        timestamp: timestamp || payload.timestamp || Date.now(),
         status: normalize(activeChatIdRef.current || '') === normalize(from) ? 'read' : 'delivered',
         replyToId,
         replyToContent
       };
 
       // Atomic Save & Update
-      const messagesInChat = await getMessagesForChat(from);
-      if (!messagesInChat.some(m => m.id === msg.id)) {
-        await saveMessage(msg);
-        
-        // Move contact to top and update snippet
-        const contact = useChatStore.getState().contacts.find(c => normalize(c.id) === normalizedFrom);
-        if (contact) {
-          const isAppBackgrounded = typeof document !== 'undefined' && document.visibilityState === 'hidden';
-          const isActiveChat = normalize(activeChatIdRef.current || '') === normalizedFrom;
-          
-          const preview = type === 'image' ? '📷 Photo' : type === 'location' ? '📍 Location' : finalContent;
-          addContact({ 
-            ...contact, 
-            lastMessage: preview, 
-            lastMessageTime: msg.timestamp,
-            unreadCount: (!isActiveChat || isAppBackgrounded) ? (contact.unreadCount || 0) + 1 : 0
-          });
-        }
+      await saveMessage(msg);
+      
+      // Force update or create contact in the sidebar
+      const currentContacts = useChatStore.getState().contacts;
+      const contact = currentContacts.find(c => normalize(c.id) === normalizedFrom);
+      
+      const preview = type === 'image' ? '📷 Photo' : type === 'location' ? '📍 Location' : finalContent;
+      const isAppBackgrounded = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+      const isActiveChat = normalize(activeChatIdRef.current || '') === normalizedFrom;
 
-        // If this is the active chat, update state
-        if (normalize(activeChatIdRef.current || '') === normalizedFrom) {
-          setMessages(prev => {
-            if (prev.some(m => m.id === msg.id)) return prev;
-            return [...prev, msg].sort((a, b) => a.timestamp - b.timestamp);
-          });
-          
-          // Send receipt
-          const statusUpdate = { messageId: msg.id, status: msg.status };
-          getSocket()?.emit('message_relay', { to: from, type: 'message_status', content: statusUpdate });
-        }
+      if (contact) {
+        const updatedContact = { 
+          ...contact, 
+          lastMessage: preview, 
+          lastMessageTime: msg.timestamp,
+          unreadCount: (!isActiveChat || isAppBackgrounded) ? (contact.unreadCount || 0) + 1 : 0
+        };
+        addContact(updatedContact);
+        await saveContact(updatedContact); // Save to permanent memory!
+      } else {
+        // Create new contact if it doesn't exist
+        const newContact = {
+          id: from,
+          username: payload.username || `User-${from.slice(-4)}`,
+          profilePic: payload.profilePic || '',
+          publicKey: payload.publicKey || '', 
+          lastMessage: preview,
+          lastMessageTime: msg.timestamp,
+          unreadCount: isActiveChat ? 0 : 1
+        };
+        addContact(newContact);
+        await saveContact(newContact); // Save to permanent memory!
+      }
+
+      // Force display if this is the active chat
+      if (normalize(activeChatIdRef.current || '') === normalizedFrom) {
+        setMessages(prev => {
+          const exists = prev.some(m => m.id === msg.id || (m.content === msg.content && Math.abs(m.timestamp - msg.timestamp) < 5000));
+          if (exists) return prev;
+          return [...prev, msg].sort((a, b) => a.timestamp - b.timestamp);
+        });
+        
+        // Send receipt
+        getSocket()?.emit('message_relay', { 
+          to: from, 
+          type: 'message_status', 
+          content: { messageId: msg.id, status: 'read' } 
+        });
       }
     } else {
       console.warn(`[Security] Decryption failed for message from ${from}. Key rotation might be needed.`);
@@ -403,7 +461,7 @@ export default function Home() {
       console.warn(`[Identity] Received empty identity payload from ${from}`);
       return;
     }
-    const { publicKey, username, profilePic } = payload;
+    const { publicKey, username, profilePic } = payload.content || payload;
     console.log(`[Identity] Updating profile for ${from}. Photo: ${profilePic ? 'Present' : 'Missing'}`);
     const normalizedFrom = normalize(from);
     const secret = deriveSharedSecret(localUser.publicKey, (window as any).myPrivateKey, publicKey);
@@ -433,6 +491,120 @@ export default function Home() {
     });
     sharedSecrets.current[normalizedFrom] = secret;
   };
+  
+  // WebRTC Calling Logic
+  const initPeerConnection = async (type: 'voice' | 'video', targetId: string) => {
+    const pc = new RTCPeerConnection({
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+    });
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        getSocket()?.emit('signal', { to: targetId, signal: { candidate: event.candidate } });
+      }
+    };
+
+    pc.ontrack = (event) => {
+      setRemoteStream(event.streams[0]);
+      setCallStatus('active');
+    };
+
+    peerConnection.current = pc;
+    return pc;
+  };
+
+  const startCall = async (type: 'voice' | 'video') => {
+    if (!activeChatId) return;
+    setCallType(type);
+    setCallStatus('calling');
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: type === 'video',
+        audio: true
+      });
+      setLocalStream(stream);
+      
+      const pc = await initPeerConnection(type, activeChatId);
+      stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      
+      getSocket()?.emit('signal', { 
+        to: activeChatId, 
+        signal: { offer, type } 
+      });
+    } catch (err) {
+      console.error('Call failed:', err);
+      setCallStatus('idle');
+    }
+  };
+
+  const endCall = () => {
+    localStream?.getTracks().forEach(t => t.stop());
+    peerConnection.current?.close();
+    setLocalStream(null);
+    setRemoteStream(null);
+    setCallStatus('idle');
+    setIncomingCall(null);
+    getSocket()?.emit('signal', { to: activeChatId || incomingCall?.from, signal: { type: 'end' } });
+  };
+
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+
+    socket.on('signal', async ({ from, signal }: any) => {
+      if (signal.type === 'end') {
+        endCall();
+        return;
+      }
+
+      if (signal.offer) {
+        setIncomingCall({ from, type: signal.type, signal: signal.offer });
+        setCallStatus('ringing');
+        return;
+      }
+
+      if (signal.answer && peerConnection.current) {
+        await peerConnection.current.setRemoteDescription(new RTCSessionDescription(signal.answer));
+      }
+
+      if (signal.candidate && peerConnection.current) {
+        await peerConnection.current.addIceCandidate(new RTCIceCandidate(signal.candidate));
+      }
+    });
+
+    return () => { socket.off('signal'); };
+  }, [!!getSocket()?.connected, localStream]);
+
+  const answerCall = async () => {
+    if (!incomingCall) return;
+    const { from, type, signal } = incomingCall;
+    setCallType(type);
+    
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: type === 'video',
+        audio: true
+      });
+      setLocalStream(stream);
+      
+      const pc = await initPeerConnection(type, from);
+      stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+      await pc.setRemoteDescription(new RTCSessionDescription(signal));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      
+      getSocket()?.emit('signal', { to: from, signal: { answer } });
+      setCallStatus('active');
+    } catch (err) {
+      console.error('Answer failed:', err);
+      endCall();
+    }
+  };
 
 
   // Refresh all contacts' info on startup
@@ -457,7 +629,6 @@ export default function Home() {
     if (!targetId) return;
     
     const cleanId = targetId.startsWith('+') ? targetId : `+${normalize(targetId)}`;
-    if (cleanId === currentUser?.id) return;
     
     // Immediately show the chat window for this ID
     setActiveChatId(cleanId);
@@ -577,12 +748,14 @@ export default function Home() {
   const sendMessage = async (content: string, type: Message['type'] = 'text', replyTo?: { id: string, content: string }) => {
     if (!activeChatId || !currentUser) return;
     
-    const normalizedChatId = normalize(activeChatId);
-    if (normalizedChatId === normalize(currentUser.id)) {
-      console.warn('[Security] You are sending a message to yourself. Use a different number for testing.');
-    }
+    const normalizedTarget = normalize(activeChatId);
+    let secret = sharedSecrets.current[normalizedTarget];
     
-    let secret = sharedSecrets.current[normalizedChatId];
+    // Allow self-messaging by using own keys if targeting self
+    if (normalizedTarget === normalize(currentUser.id)) {
+      secret = deriveSharedSecret(currentUser.publicKey, (window as any).myPrivateKey, currentUser.publicKey);
+      sharedSecrets.current[normalizedTarget] = secret;
+    }
     
     // 0. If secret is missing, try to resolve it instantly
     if (!secret && currentUser) {
@@ -632,7 +805,7 @@ export default function Home() {
     setMessages((prev) => [...prev, msg].sort((a, b) => a.timestamp - b.timestamp));
 
     // Move contact to top of list and update snippet
-    const contact = useChatStore.getState().contacts.find(c => normalize(c.id) === normalizedChatId);
+    const contact = useChatStore.getState().contacts.find(c => normalize(c.id) === normalizedTarget);
     if (contact) {
       const preview = type === 'image' ? '📷 Photo' : type === 'location' ? '📍 Location' : content;
       addContact({ 
@@ -711,6 +884,31 @@ export default function Home() {
             <p className="text-zinc-400 font-medium">Verified. Encrypted. Persistent.</p>
           </div>
 
+            <div className="flex flex-col items-center gap-2 mb-6">
+              <div className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border transition-all ${
+                isConnected 
+                  ? 'bg-green-500/10 text-green-500 border-green-500/20' 
+                  : 'bg-red-500/10 text-red-500 border-red-500/20 animate-pulse'
+              }`}>
+                {isConnected ? '● Server Online' : '○ Server Offline'}
+              </div>
+              
+              {!isConnected && (
+                <button 
+                  onClick={() => {
+                    const ip = prompt('Enter Laptop IP (e.g. 10.65.201.182):', localStorage.getItem('server_ip') || '');
+                    if (ip !== null) {
+                      localStorage.setItem('server_ip', ip);
+                      window.location.reload();
+                    }
+                  }}
+                  className="text-[10px] text-zinc-500 hover:text-purple-400 underline decoration-purple-500/30 underline-offset-4 font-bold uppercase tracking-tighter"
+                >
+                  Configure Server IP
+                </button>
+              )}
+            </div>
+
           <div className="space-y-6">
             {!isOtpSent ? (
               <>
@@ -730,44 +928,47 @@ export default function Home() {
                 >
                   Send OTP Code
                 </button>
-                {process.env.NODE_ENV === 'development' && (
-                  <button
-                    onClick={async () => {
-                      const phoneId = phoneNumber.trim() || '+19999999999';
-                      let publicKey = await getKey(`${phoneId}_public`);
-                      let privateKey = await getKey(`${phoneId}_private`);
-                      let savedUsername = await getKey(`${phoneId}_username`);
-                      
-                      if (!publicKey || !privateKey) {
-                        const keyPair = generateKeyPair();
-                        publicKey = keyPair.publicKey;
-                        privateKey = keyPair.privateKey;
-                        await saveKey(`${phoneId}_public`, publicKey);
-                        await saveKey(`${phoneId}_private`, privateKey);
-                      }
+                <div className="relative py-2">
+                  <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-white/5"></div></div>
+                  <div className="relative flex justify-center text-[10px] uppercase font-bold tracking-widest text-zinc-600 bg-transparent px-2">Local Test Mode</div>
+                </div>
 
-                      const username = savedUsername || `DevUser-${phoneId.slice(-4)}`;
-                      if (!savedUsername) await saveKey(`${phoneId}_username`, username);
+                <button
+                  onClick={async () => {
+                    const phoneId = phoneNumber.trim() || `+91${Math.floor(Math.random() * 1000000000)}`;
+                    let publicKey = await getKey(`${phoneId}_public`);
+                    let privateKey = await getKey(`${phoneId}_private`);
+                    let savedUsername = await getKey(`${phoneId}_username`);
+                    
+                    if (!publicKey || !privateKey) {
+                      const keyPair = generateKeyPair();
+                      publicKey = keyPair.publicKey;
+                      privateKey = keyPair.privateKey;
+                      await saveKey(`${phoneId}_public`, publicKey);
+                      await saveKey(`${phoneId}_private`, privateKey);
+                    }
 
-                      const newUser = {
-                        id: phoneId,
-                        username: username,
-                        phoneNumber: phoneId,
-                        publicKey: publicKey,
-                      };
-                      
-                      setCurrentUser(newUser);
-                      if (typeof window !== 'undefined') {
-                        (window as any).myPrivateKey = privateKey;
-                      }
-                      const socket = initSocket(newUser.id);
-                      setupSocketListeners(socket, newUser);
-                    }}
-                    className="w-full bg-zinc-800 text-zinc-400 font-mono text-[10px] py-2 rounded-xl border border-white/5 uppercase tracking-widest hover:text-white transition-colors"
-                  >
-                    Bypass OTP (Development Only)
-                  </button>
-                )}
+                    const username = savedUsername || `User-${phoneId.slice(-4)}`;
+                    if (!savedUsername) await saveKey(`${phoneId}_username`, username);
+
+                    const newUser = {
+                      id: phoneId,
+                      username: username,
+                      phoneNumber: phoneId,
+                      publicKey: publicKey,
+                    };
+                    
+                    setCurrentUser(newUser);
+                    if (typeof window !== 'undefined') {
+                      (window as any).myPrivateKey = privateKey;
+                    }
+                    const socket = initSocket(newUser.id);
+                    setupSocketListeners(socket, newUser);
+                  }}
+                  className="w-full bg-zinc-800 text-white font-bold py-4 rounded-2xl hover:bg-zinc-700 transition-all border border-white/5 shadow-lg"
+                >
+                  Quick Login (No OTP)
+                </button>
               </>
             ) : (
               <>
@@ -816,8 +1017,8 @@ export default function Home() {
   };
 
   return (
-    <div className="h-screen bg-black flex text-white overflow-hidden relative">
-      <div className={`${activeChatId ? 'hidden md:flex' : 'flex'} w-full md:w-80 h-full border-r border-white/5`}>
+    <div className="h-screen bg-black flex text-white overflow-hidden relative font-sans w-full">
+      <div className={`${activeChatId ? 'hidden md:flex' : 'flex'} w-full md:max-w-md h-full border-r border-white/5 bg-zinc-950`}>
         <ChatList 
           onOpenSettings={() => {
             setNewUsername(currentUser?.username || '');
@@ -858,7 +1059,21 @@ export default function Home() {
                   </div>
                 </div>
               </div>
-              <div className="flex gap-2 items-center">
+              <div className="flex gap-1 items-center">
+                <button
+                  onClick={() => startCall('video')}
+                  className="p-2 text-zinc-500 hover:text-purple-400 hover:bg-purple-500/10 rounded-xl transition-all"
+                  title="Video Call"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.934a.5.5 0 0 0-.777-.416L16 11"/><rect width="14" height="12" x="2" y="6" rx="2"/></svg>
+                </button>
+                <button
+                  onClick={() => startCall('voice')}
+                  className="p-2 text-zinc-500 hover:text-purple-400 hover:bg-purple-500/10 rounded-xl transition-all"
+                  title="Voice Call"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+                </button>
                 <button
                   onClick={() => handleAddContact(activeChatId)}
                   className="p-2 text-zinc-500 hover:text-purple-400 hover:bg-purple-500/10 rounded-xl transition-all"
@@ -946,7 +1161,7 @@ export default function Home() {
                     className="w-full bg-black/50 text-white rounded-xl px-4 py-3 text-sm border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all font-mono"
                   />
                   <button
-                    onClick={handleAddContact}
+                    onClick={() => handleAddContact()}
                     className="w-full bg-gradient-to-r from-purple-600 to-cyan-600 px-4 py-3 rounded-xl text-sm font-black shadow-lg shadow-purple-500/10 hover:brightness-110 active:scale-[0.98] transition-all"
                   >
                     ESTABLISH CONNECTION
@@ -1003,21 +1218,109 @@ export default function Home() {
                 />
               </div>
 
-              <div className="flex gap-3 pt-4">
-                <button
-                  onClick={() => setIsSettingsOpen(false)}
-                  className="flex-1 px-6 py-4 rounded-2xl bg-zinc-800 text-zinc-300 font-bold hover:bg-zinc-700 transition-all"
-                >
-                  Cancel
-                </button>
+              <div className="flex flex-col gap-3 pt-6 border-t border-white/5 mt-4">
                 <button
                   onClick={handleUpdateProfile}
-                  className="flex-1 px-6 py-4 rounded-2xl bg-white text-black font-bold hover:scale-[1.02] active:scale-[0.98] transition-all"
+                  className="w-full px-6 py-4 rounded-2xl bg-white text-black font-bold hover:scale-[1.02] active:scale-[0.98] transition-all"
                 >
                   Save Changes
                 </button>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setIsSettingsOpen(false)}
+                    className="flex-1 px-6 py-4 rounded-2xl bg-zinc-800 text-zinc-300 font-bold hover:bg-zinc-700 transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setIsSettingsOpen(false);
+                      try {
+                        await signOut(auth);
+                        logout();
+                        window.location.reload();
+                      } catch (error) {
+                        console.error("Logout failed:", error);
+                        logout();
+                        window.location.reload();
+                      }
+                    }}
+                    className="flex-1 px-6 py-4 rounded-2xl bg-red-500/10 text-red-500 border border-red-500/20 font-bold hover:bg-red-500 hover:text-white transition-all"
+                  >
+                    Sign Out
+                  </button>
+                </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+      {/* Call Overlay UI */}
+      {callStatus !== 'idle' && (
+        <div className="fixed inset-0 z-[300] flex flex-col items-center justify-between p-12 bg-black/95 backdrop-blur-2xl animate-fade-in text-white">
+          <div className="flex flex-col items-center gap-4 mt-12 animate-slide-in-top">
+            <div className="w-24 h-24 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 p-1">
+              <div className="w-full h-full rounded-full bg-zinc-900 flex items-center justify-center font-black text-2xl overflow-hidden">
+                {contacts.find(c => c.id === (activeChatId || incomingCall?.from))?.profilePic ? (
+                  <img src={contacts.find(c => c.id === (activeChatId || incomingCall?.from))?.profilePic} className="w-full h-full object-cover" />
+                ) : (
+                  (contacts.find(c => c.id === (activeChatId || incomingCall?.from))?.username || '?')[0].toUpperCase()
+                )}
+              </div>
+            </div>
+            <h2 className="text-3xl font-black tracking-tight">
+              {contacts.find(c => c.id === (activeChatId || incomingCall?.from))?.username || 'Unknown'}
+            </h2>
+            <p className="text-indigo-400 font-mono text-sm uppercase tracking-widest animate-pulse">
+              {callStatus === 'ringing' ? 'Incoming Call...' : callStatus === 'calling' ? 'Calling...' : 'Active Call'}
+            </p>
+          </div>
+
+          {/* Video Streams */}
+          {callType === 'video' && (
+            <div className="absolute inset-0 z-0">
+              <video 
+                ref={(el) => { if (el) el.srcObject = remoteStream; }} 
+                autoPlay 
+                playsInline
+                className="w-full h-full object-cover"
+              />
+              <div className="absolute bottom-32 right-8 w-32 h-48 rounded-2xl overflow-hidden border-2 border-white/20 shadow-2xl bg-black">
+                <video 
+                  ref={(el) => { if (el) el.srcObject = localStream; }} 
+                  autoPlay 
+                  playsInline 
+                  muted
+                  className="w-full h-full object-cover"
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="relative z-10 flex gap-8 mb-12 animate-slide-in-bottom">
+            {callStatus === 'ringing' ? (
+              <>
+                <button 
+                  onClick={answerCall}
+                  className="w-16 h-16 rounded-full bg-green-500 flex items-center justify-center shadow-xl shadow-green-500/30 hover:scale-110 active:scale-95 transition-all"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+                </button>
+                <button 
+                  onClick={endCall}
+                  className="w-16 h-16 rounded-full bg-red-500 flex items-center justify-center shadow-xl shadow-red-500/30 hover:scale-110 active:scale-95 transition-all"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </>
+            ) : (
+              <button 
+                onClick={endCall}
+                className="w-20 h-20 rounded-full bg-red-500 flex items-center justify-center shadow-2xl shadow-red-500/40 hover:scale-110 active:scale-95 transition-all"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            )}
           </div>
         </div>
       )}

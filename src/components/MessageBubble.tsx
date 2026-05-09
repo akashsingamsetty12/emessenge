@@ -24,7 +24,7 @@ export function MessageBubble({
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   const OptionsMenu = () => (
-    <div className={`absolute top-0 ${isMe ? '-left-48' : '-right-48'} flex flex-col gap-2 z-50 animate-scale-in`}>
+    <div className={`absolute top-0 ${isMe ? 'right-full mr-2' : 'left-full ml-2'} flex flex-col gap-2 z-50 animate-scale-in`}>
       <div className="bg-zinc-900/95 backdrop-blur-xl border border-white/10 rounded-2xl p-2 shadow-2xl min-w-[160px]">
         {/* Reactions */}
         <div className="flex items-center justify-around pb-2 border-b border-white/5 mb-2 px-1">
@@ -105,8 +105,6 @@ export function MessageBubble({
     return (
       <div 
         className={`flex ${isMe ? 'justify-end' : 'justify-start'} group mb-4 relative animate-scale-in`}
-        onMouseEnter={() => setShowOptions(true)}
-        onMouseLeave={() => setShowOptions(false)}
       >
         <div className={`max-w-[80%] rounded-2xl p-1 shadow-2xl relative chat-bubble-shadow ${isMe ? 'bg-purple-600' : 'bg-zinc-800'}`}>
           <ReplyPreview />
@@ -149,8 +147,6 @@ export function MessageBubble({
     return (
       <div 
         className={`flex ${isMe ? 'justify-end' : 'justify-start'} group mb-4 relative animate-scale-in`}
-        onMouseEnter={() => setShowOptions(true)}
-        onMouseLeave={() => setShowOptions(false)}
       >
         <div className={`max-w-[80%] rounded-2xl p-1 shadow-2xl relative chat-bubble-shadow ${isMe ? 'bg-purple-600' : 'bg-zinc-800'}`}>
           <ReplyPreview />
@@ -214,8 +210,6 @@ export function MessageBubble({
     return (
       <div 
         className={`flex ${isMe ? 'justify-end' : 'justify-start'} group mb-4 relative animate-scale-in`}
-        onMouseEnter={() => setShowOptions(true)}
-        onMouseLeave={() => setShowOptions(false)}
       >
         <div className={`max-w-[85%] rounded-2xl p-3 shadow-2xl relative chat-bubble-shadow ${isMe ? 'bg-indigo-600' : 'bg-zinc-800'}`}>
           <ReplyPreview />
@@ -285,8 +279,6 @@ export function MessageBubble({
     return (
       <div 
         className={`flex ${isMe ? 'justify-end' : 'justify-start'} group mb-4 relative animate-scale-in`}
-        onMouseEnter={() => setShowOptions(true)}
-        onMouseLeave={() => setShowOptions(false)}
       >
         <div className={`max-w-[80%] rounded-2xl shadow-2xl overflow-hidden border border-white/5 relative chat-bubble-shadow ${isMe ? 'bg-purple-600' : 'bg-zinc-800'}`}>
           <ReplyPreview />
@@ -310,8 +302,6 @@ export function MessageBubble({
   return (
     <div 
       className={`flex ${isMe ? 'justify-end' : 'justify-start'} group mb-4 relative animate-scale-in`}
-      onMouseEnter={() => setShowOptions(true)}
-      onMouseLeave={() => setShowOptions(false)}
     >
       <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 shadow-2xl relative chat-bubble-shadow ${isMe ? 'bg-purple-600 text-white rounded-tr-none' : 'bg-zinc-800 text-zinc-100 rounded-tl-none'}`}>
         <ReplyPreview />

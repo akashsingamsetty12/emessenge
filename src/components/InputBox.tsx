@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Paperclip, Send, MapPin, Smile, X, Reply } from 'lucide-react';
 
 interface InputBoxProps {
-  onSend: (content: string, type: 'text' | 'image' | 'location' | 'video', replyTo?: { id: string, content: string }) => void;
+  onSend: (content: string, type: 'text' | 'image' | 'location' | 'video' | 'audio', replyTo?: { id: string, content: string }) => void;
   onTyping: (isTyping: boolean) => void;
   replyingTo: { id: string, content: string } | null;
   onCancelReply: () => void;

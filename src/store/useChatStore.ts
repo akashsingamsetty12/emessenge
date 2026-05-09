@@ -21,6 +21,7 @@ interface ChatState {
   setActiveChatId: (id: string | null) => void;
   setTyping: (userId: string, isTyping: boolean) => void;
   markAsRead: (userId: string) => void;
+  removeContact: (userId: string) => void;
   logout: () => void;
 }
 
@@ -42,6 +43,9 @@ export const useChatStore = create<ChatState>((set) => ({
     contacts: state.contacts.map(c => 
       c.id === userId ? { ...c, unreadCount: 0 } : c
     )
+  })),
+  removeContact: (userId) => set((state) => ({
+    contacts: state.contacts.filter(c => c.id !== userId)
   })),
   logout: () => set({ currentUser: null, activeChatId: null, contacts: [], typingUsers: {} }),
 }));

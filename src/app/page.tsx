@@ -27,8 +27,8 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState('');
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const [peerStatuses, setPeerStatuses] = useState<{ [key: string]: boolean }>({});
   const sharedSecrets = useRef<{ [key: string]: string }>({});
+  const secretsDerivedFor = useRef<string>(''); // Stores currentUser.id + contacts version
   const activeChatIdRef = useRef<string | null>(null);
   const currentUserRef = useRef<User | null>(null);
 
@@ -76,21 +76,31 @@ export default function Home() {
         onAuthStateChanged(auth, async (user) => {
           if (!isMounted) return;
           if (user && user.phoneNumber) {
-            const savedPublicKey = await getKey(`${user.phoneNumber}_public`);
-            const savedPrivateKey = await getKey(`${user.phoneNumber}_private`);
-            const savedUsername = await getKey(`${user.phoneNumber}_username`);
+            const phoneId = user.phoneNumber;
+            let publicKey = await getKey(`${phoneId}_public`);
+            let privateKey = await getKey(`${phoneId}_private`);
+            let savedUsername = await getKey(`${phoneId}_username`);
 
-            if (savedPublicKey && savedPrivateKey && isMounted) {
+            if (!publicKey || !privateKey) {
+              console.log('[Security] No local keys found for authenticated user. Generating new pair...');
+              const keyPair = generateKeyPair();
+              publicKey = keyPair.publicKey;
+              privateKey = keyPair.privateKey;
+              await saveKey(`${phoneId}_public`, publicKey);
+              await saveKey(`${phoneId}_private`, privateKey);
+            }
+
+            if (isMounted) {
               const restoredUser = {
-                id: user.phoneNumber,
-                username: savedUsername || 'Anonymous',
-                phoneNumber: user.phoneNumber,
-                publicKey: savedPublicKey,
+                id: phoneId,
+                username: savedUsername || `User-${phoneId.slice(-4)}`,
+                phoneNumber: phoneId,
+                publicKey: publicKey,
               };
               
               setCurrentUser(restoredUser);
               if (typeof window !== 'undefined') {
-                (window as any).myPrivateKey = savedPrivateKey;
+                (window as any).myPrivateKey = privateKey;
               }
               
               const socket = initSocket(restoredUser.id);
@@ -114,13 +124,18 @@ export default function Home() {
     if (currentUser && typeof window !== 'undefined') {
       const privateKey = (window as any).myPrivateKey;
       if (privateKey) {
-        console.log('[Security] Initializing key vault for:', currentUser.username);
+        const derivationKey = `${currentUser.id}:${contacts.length}:${contacts.map(c => c.publicKey.slice(0, 5)).join(',')}`;
+        if (secretsDerivedFor.current === derivationKey) return;
+
+        console.log('[Security] Syncing key vault for:', currentUser.username);
         contacts.forEach(contact => {
-          if (contact.publicKey) {
+          const normalizedId = normalize(contact.id);
+          if (contact.publicKey && !sharedSecrets.current[normalizedId]) {
             const secret = deriveSharedSecret(currentUser.publicKey, privateKey, contact.publicKey);
-            sharedSecrets.current[normalize(contact.id)] = secret;
+            sharedSecrets.current[normalizedId] = secret;
           }
         });
+        secretsDerivedFor.current = derivationKey;
       }
     }
   }, [currentUser, contacts]);
@@ -197,10 +212,23 @@ export default function Home() {
   };
 
   const setupSocketListeners = (socket: any, initialUser: User) => {
+    const register = () => {
+      console.log(`[Socket] Registering identity for ${initialUser.id}...`);
+      socket.emit('client_ready');
+      socket.emit('register_identity', { 
+        publicKey: initialUser.publicKey, 
+        username: initialUser.username 
+      });
+    };
+
+    socket.on('connect', register);
+    if (socket.connected) register();
+
     socket.on('message_relay', (data: any) => {
       console.log(`[Socket] Data arrived from relay:`, data.type);
       processIncomingData(data.from, data);
     });
+
     socket.on('identity_broadcast', (data: any) => {
       const user = currentUserRef.current;
       if (user) {
@@ -213,9 +241,9 @@ export default function Home() {
       useChatStore.getState().setTyping(from, isTyping);
     });
 
-    // 3. Signal ready
-    socket.emit('client_ready');
-    socket.emit('register_identity', { publicKey: initialUser.publicKey, username: initialUser.username });
+    socket.on('disconnect', () => {
+      console.log('[Socket] Disconnected from relay');
+    });
   };
 
   const processIncomingData = async (from: string, payload: any) => {

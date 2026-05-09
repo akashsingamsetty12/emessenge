@@ -1,12 +1,25 @@
 'use client';
 
 import { useChatStore } from '@/store/useChatStore';
-import { Search, MoreVertical, MessageSquarePlus, LogOut } from 'lucide-react';
+import { Search, MoreVertical, MessageSquarePlus, LogOut, Trash2 } from 'lucide-react';
 import { auth } from '@/lib/firebase';
 import { signOut } from 'firebase/auth';
+import { deleteMessagesForChat, deleteContact } from '@/lib/storage';
 
 export const ChatList = () => {
-  const { contacts, setActiveChatId, activeChatId, currentUser, logout } = useChatStore();
+  const { contacts, setActiveChatId, activeChatId, currentUser, removeContact, logout } = useChatStore();
+
+  const handleDeleteChat = async (e: React.MouseEvent, contactId: string) => {
+    e.stopPropagation(); // Don't open the chat when clicking delete
+    if (confirm('Delete this entire chat and remove from messages?')) {
+      await deleteMessagesForChat(contactId);
+      await deleteContact(contactId);
+      removeContact(contactId);
+      if (activeChatId === contactId) {
+        setActiveChatId(null);
+      }
+    }
+  };
 
   const handleLogout = async () => {
     try {
@@ -80,11 +93,20 @@ export const ChatList = () => {
                   <p className={`text-xs truncate transition-colors ${contact.unreadCount && contact.unreadCount > 0 ? 'text-zinc-200 font-bold' : 'text-zinc-500'}`}>
                     {contact.lastMessage || 'End-to-end encrypted'}
                   </p>
-                  {contact.unreadCount && contact.unreadCount > 0 && (
-                    <div className="ml-2 bg-purple-500 text-white text-[10px] font-black h-5 min-w-[20px] px-1.5 rounded-full flex items-center justify-center shadow-lg shadow-purple-500/20 animate-in zoom-in duration-300">
-                      {contact.unreadCount}
-                    </div>
-                  )}
+                  <div className="flex items-center gap-2 ml-2">
+                    {contact.unreadCount && contact.unreadCount > 0 && (
+                      <div className="bg-purple-500 text-white text-[10px] font-black h-5 min-w-[20px] px-1.5 rounded-full flex items-center justify-center shadow-lg shadow-purple-500/20">
+                        {contact.unreadCount}
+                      </div>
+                    )}
+                    <button
+                      onClick={(e) => handleDeleteChat(e, contact.id)}
+                      className="p-1.5 text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all hover:bg-red-500/10 rounded-lg"
+                      title="Delete Chat"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

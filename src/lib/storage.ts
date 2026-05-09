@@ -24,6 +24,9 @@ export interface Contact {
   publicKey: string;
   sharedSecret?: string;
   profilePic?: string;
+  lastMessage?: string;
+  lastMessageTime?: number;
+  unreadCount?: number;
 }
 
 let dbPromise: Promise<IDBPDatabase> | null = null;

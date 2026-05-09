@@ -266,7 +266,7 @@ export default function Home() {
       register();
     }
 
-    socket.on('message_relay', (data: any) => {
+    socket.on('message_relay', (data: { from: string, type: string, content: any, id: string, timestamp: number, chatId?: string }) => {
       console.log(`[Socket] Data arrived from relay:`, data.type);
       processIncomingData(data.from, data);
     });
@@ -298,7 +298,7 @@ export default function Home() {
     });
   };
 
-  const processIncomingData = async (from: string, payload: any) => {
+  const processIncomingData = async (from: string, payload: { type: string, content: any, id?: string, timestamp?: number, chatId?: string }) => {
     const { type, content, timestamp, id } = payload;
     console.log(`[Relay] Incoming ${type} from ${from}`);
     console.log(`[Incoming] ${type || 'message'} from ${from}`);
@@ -439,19 +439,23 @@ export default function Home() {
         await saveMessage(msg);
         
         // Move contact to top and update snippet
-        const contact = useChatStore.getState().contacts.find(c => normalize(c.id) === normalize(conversationId));
-        if (contact) {
-          const isAppBackgrounded = typeof document !== 'undefined' && document.visibilityState === 'hidden';
-          const isActiveChat = normalize(activeChatIdRef.current || '') === normalize(conversationId);
-          
-          const preview = type === 'image' ? '📷 Photo' : type === 'location' ? '📍 Location' : finalContent;
-          addContact({ 
-            ...contact, 
-            lastMessage: preview, 
-            lastMessageTime: msg.timestamp,
-            unreadCount: (!isActiveChat || isAppBackgrounded) ? (contact.unreadCount || 0) + 1 : 0
-          });
-        }
+        const existingContact = useChatStore.getState().contacts.find(c => normalize(c.id) === normalize(conversationId));
+        const isAppBackgrounded = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+        const isActiveChat = normalize(activeChatIdRef.current || '') === normalize(conversationId);
+        const preview = type === 'image' ? '📷 Photo' : type === 'location' ? '📍 Location' : finalContent;
+
+        const updatedContact: Contact = {
+          id: conversationId,
+          username: existingContact?.username || `User-${conversationId.slice(-4)}`,
+          publicKey: existingContact?.publicKey || '',
+          profilePic: existingContact?.profilePic,
+          lastMessage: preview,
+          lastMessageTime: msg.timestamp,
+          unreadCount: (!isActiveChat || isAppBackgrounded) ? (existingContact?.unreadCount || 0) + 1 : 0
+        };
+
+        addContact(updatedContact);
+        saveContact(updatedContact);
 
         // If this is the active chat, update state
         if (normalize(activeChatIdRef.current || '') === normalize(conversationId)) {
@@ -749,10 +753,13 @@ export default function Home() {
 
   const startCall = async (isVideo: boolean) => {
     if (!activeChatId || !currentUser) return;
-    
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: isVideo, 
+        video: isVideo ? {
+          facingMode: 'user',
+          width: { ideal: 640 },
+          height: { ideal: 480 }
+        } : false, 
         audio: true 
       });
       setLocalStream(stream);
@@ -799,7 +806,11 @@ export default function Home() {
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: isVideoCall, 
+        video: isVideoCall ? {
+          facingMode: 'user',
+          width: { ideal: 640 },
+          height: { ideal: 480 }
+        } : false, 
         audio: true 
       });
       setLocalStream(stream);
@@ -1271,6 +1282,14 @@ export default function Home() {
                   accept="image/*"
                   onChange={handlePhotoChange}
                 />
+                {newProfilePic && (
+                  <button 
+                    onClick={() => setNewProfilePic('')}
+                    className="text-[10px] font-bold text-red-400 hover:text-red-300 uppercase tracking-[0.2em] transition-colors"
+                  >
+                    Remove Photo
+                  </button>
+                )}
                 <p className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest">{currentUser?.id}</p>
               </div>
 

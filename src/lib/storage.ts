@@ -46,7 +46,12 @@ const getDB = () => {
   return dbPromise;
 };
 
-const normalize = (id: string) => id ? id.replace(/\D/g, '') : '';
+const normalize = (id: string) => {
+  if (!id) return '';
+  let cleaned = id.replace(/\D/g, '');
+  if (cleaned.length === 10) cleaned = '91' + cleaned;
+  return cleaned;
+};
 
 export const saveContact = async (contact: Contact) => {
   const db = await getDB();

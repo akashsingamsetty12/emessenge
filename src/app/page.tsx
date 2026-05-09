@@ -431,35 +431,39 @@ export default function Home() {
     // This is handled in onData 'key_exchange'
   }, []);
 
-  const handleAddContact = () => {
-    const id = `+${normalize(targetIdInput)}`;
-    if (!id || id === currentUser?.id) return;
+  const handleAddContact = (id?: string) => {
+    const targetId = typeof id === 'string' ? id : prompt('Enter phone number (e.g., +91888...):');
+    if (!targetId) return;
+    
+    const cleanId = targetId.startsWith('+') ? targetId : `+${normalize(targetId)}`;
+    if (cleanId === currentUser?.id) return;
     
     // Immediately show the chat window for this ID
-    setActiveChatId(id);
+    setActiveChatId(cleanId);
     
     // Add a temporary contact entry if it doesn't exist
-    if (!contacts.find(c => c.id === id)) {
-      addContact({ id, username: `User-${id.slice(-4)}`, publicKey: '' });
+    if (!contacts.find(c => c.id === cleanId)) {
+      const tempContact = { id: cleanId, username: `User-${cleanId.slice(-4)}`, publicKey: '' };
+      addContact(tempContact);
+      saveContact(tempContact);
     }
 
     const socket = getSocket();
     if (socket && currentUser) {
-      // 1. Immediately save the contact locally so it persists
-      const tempContact = { id, username: `User-${id.slice(-4)}`, publicKey: '' };
-      addContact(tempContact);
-      saveContact(tempContact);
-
-      // 2. Try to fetch their key from the server for instant chat
-      socket.emit('get_identity', id, (identity: any) => {
+      // 1. Try to fetch their key from the server for instant chat
+      socket.emit('get_identity', cleanId, (identity: any) => {
         if (identity && currentUser) {
-          handleIdentityReceived(id, identity, currentUser);
-          console.log('[Instant] Keys discovered via server directory');
+          handleIdentityReceived(cleanId, identity, currentUser);
         }
       });
 
-      // 3. Also broadcast our identity to them directly
-      socket.emit('identity_broadcast', { to: id, publicKey: currentUser.publicKey, username: currentUser.username });
+      // 2. Also broadcast our identity to them directly
+      socket.emit('identity_broadcast', { 
+        to: cleanId, 
+        publicKey: currentUser.publicKey, 
+        username: currentUser.username,
+        profilePic: currentUser.profilePic
+      });
     }
 
     setTargetIdInput('');
@@ -790,18 +794,29 @@ export default function Home() {
   };
 
   return (
-    <div className="h-screen bg-black flex text-white overflow-hidden">
-      <ChatList onOpenSettings={() => {
-        setNewUsername(currentUser?.username || '');
-        setNewProfilePic(currentUser?.profilePic || '');
-        setIsSettingsOpen(true);
-      }} />
+    <div className="h-screen bg-black flex text-white overflow-hidden relative">
+      <div className={`${activeChatId ? 'hidden md:flex' : 'flex'} w-full md:w-80 h-full border-r border-white/5`}>
+        <ChatList 
+          onOpenSettings={() => {
+            setNewUsername(currentUser?.username || '');
+            setNewProfilePic(currentUser?.profilePic || '');
+            setIsSettingsOpen(true);
+          }} 
+          onAddContact={handleAddContact}
+        />
+      </div>
       
-      <div className="flex-1 flex flex-col relative">
+      <div className={`${activeChatId ? 'flex' : 'hidden md:flex'} flex-1 flex flex-col relative h-full bg-zinc-950`}>
         {activeChatId ? (
           <>
             <div className="p-4 border-b border-zinc-800/50 flex justify-between items-center bg-zinc-900/30 backdrop-blur-md sticky top-0 z-10">
               <div className="flex items-center gap-3">
+                <button 
+                  onClick={() => setActiveChatId(null)}
+                  className="md:hidden p-2 -ml-2 text-zinc-400 hover:text-white"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                </button>
                 <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-600 to-blue-600 flex items-center justify-center font-bold border border-white/5 overflow-hidden shadow-lg shadow-purple-500/20">
                   {contacts.find(c => c.id === activeChatId)?.profilePic ? (
                     <img src={contacts.find(c => c.id === activeChatId)?.profilePic} className="w-full h-full object-cover" />

@@ -36,14 +36,12 @@ export function MessageBubble({
       >
         <Trash2 size={10} /> Delete for me
       </button>
-      {isMe && (
-        <button 
-          onClick={() => onDelete(id, 'everyone')} 
-          className="flex items-center gap-2 px-3 py-1.5 bg-red-900/90 backdrop-blur text-[10px] rounded-xl border border-red-500/20 hover:bg-red-800 transition-colors"
-        >
-          <Trash2 size={10} /> Delete for everyone
-        </button>
-      )}
+      <button 
+        onClick={() => onDelete(id, 'everyone')} 
+        className="flex items-center gap-2 px-3 py-1.5 bg-red-900/90 backdrop-blur text-[10px] rounded-xl border border-red-500/20 hover:bg-red-800 transition-colors"
+      >
+        <Trash2 size={10} /> Delete for everyone
+      </button>
     </div>
   );
 
@@ -51,7 +49,12 @@ export function MessageBubble({
     replyToContent && (
       <div className={`mb-1 p-2 rounded-xl border-l-4 border-purple-500 bg-black/20 text-[10px] opacity-80 max-w-full truncate ${isMe ? 'text-zinc-300' : 'text-zinc-400'}`}>
         <p className="font-bold uppercase tracking-widest text-[8px] mb-0.5 text-purple-400">Replying to</p>
-        <p className="italic truncate">{replyToContent.startsWith('data:video') ? '🎬 Video' : (replyToContent.startsWith('data:image') ? '📷 Photo' : (replyToContent.startsWith('LOC:') ? '📍 Location' : replyToContent))}</p>
+        <p className="italic truncate">
+          {replyToContent.startsWith('data:audio') ? '🎵 Audio' : 
+           replyToContent.startsWith('data:video') ? '🎬 Video' : 
+           replyToContent.startsWith('data:image') ? '📷 Photo' : 
+           replyToContent.startsWith('LOC:') ? '📍 Location' : replyToContent}
+        </p>
       </div>
     )
   );
@@ -93,6 +96,32 @@ export function MessageBubble({
             />
           </div>
           <div className="px-2 py-1 flex justify-end gap-1 opacity-60">
+             <span className="text-[9px]">{new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+             {isMe && status === 'read' && <CheckCheck size={10} className="text-blue-300" />}
+          </div>
+          {showOptions && <OptionsMenu />}
+        </div>
+      </div>
+    );
+  }
+
+  if (content.startsWith('data:audio')) {
+    return (
+      <div 
+        className={`flex ${isMe ? 'justify-end' : 'justify-start'} group mb-4 relative`}
+        onMouseEnter={() => setShowOptions(true)}
+        onMouseLeave={() => setShowOptions(false)}
+      >
+        <div className={`max-w-[80%] rounded-2xl p-3 shadow-lg relative ${isMe ? 'bg-purple-600' : 'bg-zinc-800'}`}>
+          <ReplyPreview />
+          <div className="flex items-center gap-3 bg-black/20 p-2 rounded-xl border border-white/5">
+            <audio 
+              src={content} 
+              controls 
+              className="w-full h-8 custom-audio"
+            />
+          </div>
+          <div className="mt-2 flex justify-end gap-1 opacity-60">
              <span className="text-[9px]">{new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
              {isMe && status === 'read' && <CheckCheck size={10} className="text-blue-300" />}
           </div>

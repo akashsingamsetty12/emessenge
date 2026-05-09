@@ -33,7 +33,10 @@ export function InputBox({ onSend, onTyping, replyingTo, onCancelReply }: InputB
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const type = file.type.startsWith('video') ? 'video' : 'image';
+      let type: 'image' | 'video' | 'audio' = 'image';
+      if (file.type.startsWith('video')) type = 'video';
+      else if (file.type.startsWith('audio')) type = 'audio';
+      
       const reader = new FileReader();
       reader.onload = (event) => {
         const base64 = event.target?.result as string;
@@ -72,7 +75,7 @@ export function InputBox({ onSend, onTyping, replyingTo, onCancelReply }: InputB
             <div className="border-l-2 border-purple-500 pl-3 overflow-hidden">
               <p className="text-[10px] font-bold text-purple-400 uppercase tracking-widest">Replying to</p>
               <p className="text-xs text-zinc-400 truncate italic">
-                {replyingTo.content.startsWith('data:video') ? '🎬 Video' : (replyingTo.content.startsWith('data:image') ? '📷 Photo' : (replyingTo.content.startsWith('LOC:') ? '📍 Location' : replyingTo.content))}
+                {replyingTo.content.startsWith('data:audio') ? '🎵 Audio' : (replyingTo.content.startsWith('data:video') ? '🎬 Video' : (replyingTo.content.startsWith('data:image') ? '📷 Photo' : (replyingTo.content.startsWith('LOC:') ? '📍 Location' : replyingTo.content)))}
               </p>
             </div>
           </div>
@@ -96,7 +99,7 @@ export function InputBox({ onSend, onTyping, replyingTo, onCancelReply }: InputB
           type="file" 
           ref={fileInputRef} 
           className="hidden" 
-          accept="image/*,video/*"
+          accept="image/*,video/*,audio/*"
           onChange={handleFileChange}
         />
         

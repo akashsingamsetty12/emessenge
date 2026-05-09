@@ -15,7 +15,7 @@ export interface Message {
   status?: 'sent' | 'delivered' | 'read';
   replyToId?: string;
   replyToContent?: string;
-  type?: 'text' | 'image' | 'location' | 'video';
+  type?: 'text' | 'image' | 'location' | 'video' | 'audio';
 }
 
 export interface Contact {

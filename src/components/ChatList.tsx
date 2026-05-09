@@ -8,15 +8,18 @@ import { deleteMessagesForChat, deleteContact } from '@/lib/storage';
 
 interface ChatListProps {
   onOpenSettings: () => void;
+  onAddContact: () => void;
 }
 
-export const ChatList = ({ onOpenSettings }: ChatListProps) => {
+export const ChatList = ({ onOpenSettings, onAddContact }: ChatListProps) => {
   const { contacts, setActiveChatId, activeChatId, currentUser, removeContact, logout } = useChatStore();
 
   const formatPreview = (msg: string | undefined) => {
     if (!msg) return 'End-to-end encrypted';
     if (msg.startsWith('LOC:')) return '📍 Location';
     if (msg.startsWith('data:image')) return '📷 Photo';
+    if (msg.startsWith('data:video')) return '🎬 Video';
+    if (msg.startsWith('data:audio')) return '🎵 Audio';
     return msg;
   };
 
@@ -157,6 +160,14 @@ export const ChatList = ({ onOpenSettings }: ChatListProps) => {
           </div>
         </div>
       )}
+      {/* Mobile Add Chat FAB */}
+      <button 
+        onClick={onAddContact}
+        className="absolute bottom-24 right-6 w-14 h-14 bg-purple-600 rounded-full flex items-center justify-center shadow-2xl shadow-purple-500/40 hover:scale-110 active:scale-95 transition-all z-50 text-white"
+        title="New Message"
+      >
+        <MessageSquarePlus size={24} />
+      </button>
     </div>
   );
 };

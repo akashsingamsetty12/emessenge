@@ -58,6 +58,7 @@ export default function Home() {
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
   const peerRef = useRef<PeerConnection | null>(null);
+  const signalBufferRef = useRef<any[]>([]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -290,6 +291,9 @@ export default function Home() {
       console.log(`[Call] Received signal from ${from}`);
       if (peerRef.current) {
         peerRef.current.signal(signal);
+      } else {
+        console.log('[Call] Buffering signal because peer is not ready');
+        signalBufferRef.current.push(signal);
       }
     });
   };
@@ -352,7 +356,7 @@ export default function Home() {
 
     if (type === 'call_response') {
       if (content === 'accepted') {
-        // Handled via simple-peer connection
+        setCallState('active');
       } else {
         cleanupCall();
       }
@@ -818,6 +822,13 @@ export default function Home() {
 
       peerRef.current = peer;
 
+      // 4. Flush the buffer (Apply all signals that arrived before we hit answer)
+      if (signalBufferRef.current.length > 0) {
+        console.log(`[Call] Applying ${signalBufferRef.current.length} buffered signals`);
+        signalBufferRef.current.forEach(sig => peer.signal(sig));
+        signalBufferRef.current = [];
+      }
+
       getSocket()?.emit('message_relay', {
         to: callerId,
         type: 'call_response',
@@ -856,6 +867,7 @@ export default function Home() {
       peerRef.current.destroy();
       peerRef.current = null;
     }
+    signalBufferRef.current = [];
     if (localStream) {
       localStream.getTracks().forEach(track => track.stop());
       setLocalStream(null);

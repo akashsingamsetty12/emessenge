@@ -16,7 +16,11 @@ export function InputBox({ onSend, onTyping, replyingTo, onCancelReply }: InputB
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const emojis = ['😊', '😂', '❤️', '👍', '🔥', '✨', '🙌', '🎉', '😎', '🤔', '😢', '😍', '👋', '🙏', '💯', '🚀'];
+  const emojis = [
+    '😊', '😂', '❤️', '👍', '🔥', '✨', '🙌', '🎉', '😎', '🤔', '😢', '😍', '👋', '🙏', '💯', '🚀',
+    '🤩', '😜', '🙄', '😴', '🤯', '😭', '😡', '😱', '🥳', '😇', '💩', '🤡', '👻', '💀', '👽', '👾',
+    '🐱', '🐶', '🦊', '🦁', '🐸', '🐼', '🦄', '🌈', '🍕', '🍔', '🍺', '☕', '🎮', '⚽', '🎸', '📱'
+  ];
 
   useEffect(() => {
     if (replyingTo) {
@@ -114,11 +118,15 @@ export function InputBox({ onSend, onTyping, replyingTo, onCancelReply }: InputB
         
         <div className="relative flex-1 flex items-center bg-black/40 rounded-2xl border border-white/5 focus-within:ring-2 focus-within:ring-purple-500/50 transition-all">
           {showEmojiPicker && (
-            <div className="absolute bottom-full left-0 mb-4 p-3 bg-zinc-900/90 backdrop-blur-2xl rounded-3xl border border-white/10 shadow-2xl grid grid-cols-4 gap-2 animate-scale-in z-50">
+            <div className="absolute bottom-full right-0 mb-4 p-4 bg-zinc-900/95 backdrop-blur-2xl rounded-[2rem] border border-white/10 shadow-2xl grid grid-cols-6 gap-2 animate-scale-in z-50 w-[280px] max-h-[300px] overflow-y-auto custom-scrollbar">
+              <p className="col-span-6 text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1 ml-1">Most Popular</p>
               {emojis.map(emoji => (
                 <button
                   key={emoji}
-                  onClick={() => handleEmojiClick(emoji)}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    handleEmojiClick(emoji);
+                  }}
                   className="w-10 h-10 flex items-center justify-center hover:bg-white/10 rounded-xl transition-all active:scale-90 text-xl"
                 >
                   {emoji}
@@ -144,9 +152,7 @@ export function InputBox({ onSend, onTyping, replyingTo, onCancelReply }: InputB
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') handleSend();
-              setShowEmojiPicker(false);
             }}
-            onFocus={() => setShowEmojiPicker(false)}
             className="w-full bg-transparent text-white px-2 py-3 text-sm focus:outline-none"
           />
           <button 

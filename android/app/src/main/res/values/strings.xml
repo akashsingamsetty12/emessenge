@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">eMessage</string>
+    <string name="title_activity_main">eMessage</string>
+    <string name="package_name">com.emessage.app</string>
+    <string name="custom_url_scheme">com.emessage.app</string>
+</resources>

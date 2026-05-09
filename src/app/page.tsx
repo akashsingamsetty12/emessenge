@@ -412,29 +412,33 @@ export default function Home() {
       }
 
       console.log(`[Decryption] Success: "${finalContent.slice(0, 10)}..." from ${from}`);
+      
+      // If it's a self-sync message, use the chatId provided by the server
+      const conversationId = (normalize(from) === normalize(user.id)) ? (payload.chatId || from) : from;
+
       const msg: Message = {
         id: id || uuidv4(),
         senderId: from,
-        receiverId: user.id,
-        chatId: from,
+        receiverId: (normalize(from) === normalize(user.id)) ? conversationId : user.id,
+        chatId: conversationId,
         content: finalContent,
         type: type,
         timestamp: timestamp || Date.now(),
-        status: normalize(activeChatIdRef.current || '') === normalize(from) ? 'read' : 'delivered',
+        status: normalize(activeChatIdRef.current || '') === normalize(conversationId) ? 'read' : 'delivered',
         replyToId,
         replyToContent
       };
 
       // Atomic Save & Update
-      const messagesInChat = await getMessagesForChat(from);
+      const messagesInChat = await getMessagesForChat(conversationId);
       if (!messagesInChat.some(m => m.id === msg.id)) {
         await saveMessage(msg);
         
         // Move contact to top and update snippet
-        const contact = useChatStore.getState().contacts.find(c => normalize(c.id) === normalizedFrom);
+        const contact = useChatStore.getState().contacts.find(c => normalize(c.id) === normalize(conversationId));
         if (contact) {
           const isAppBackgrounded = typeof document !== 'undefined' && document.visibilityState === 'hidden';
-          const isActiveChat = normalize(activeChatIdRef.current || '') === normalizedFrom;
+          const isActiveChat = normalize(activeChatIdRef.current || '') === normalize(conversationId);
           
           const preview = type === 'image' ? '📷 Photo' : type === 'location' ? '📍 Location' : finalContent;
           addContact({ 
@@ -446,7 +450,7 @@ export default function Home() {
         }
 
         // If this is the active chat, update state
-        if (normalize(activeChatIdRef.current || '') === normalizedFrom) {
+        if (normalize(activeChatIdRef.current || '') === normalize(conversationId)) {
           setMessages(prev => {
             if (prev.some(m => m.id === msg.id)) return prev;
             return [...prev, msg].sort((a, b) => a.timestamp - b.timestamp);

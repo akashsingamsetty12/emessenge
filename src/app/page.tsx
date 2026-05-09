@@ -265,7 +265,7 @@ export default function Home() {
     console.log(`[Incoming] ${type || 'message'} from ${from}`);
 
     if (type === 'identity') {
-      if (currentUser) handleIdentityReceived(from, content, currentUser);
+      if (currentUser) handleIdentityReceived(from, content || payload, currentUser);
       return;
     }
 
@@ -284,13 +284,24 @@ export default function Home() {
       return;
     }
 
+    if (type === 'delete_chat') {
+      await deleteMessagesForChat(from);
+      await deleteContact(from);
+      useChatStore.getState().removeContact(from);
+      if (normalize(activeChatIdRef.current || '') === normalize(from)) {
+        setActiveChatId(null);
+        setMessages([]);
+      }
+      return;
+    }
+
     if (type === 'typing') {
       useChatStore.getState().setTyping(from, content);
       return;
     }
 
     if (type === 'key_exchange') {
-      if (currentUser) handleIdentityReceived(from, content, currentUser);
+      if (currentUser) handleIdentityReceived(from, content || payload, currentUser);
       return;
     }
 
@@ -318,6 +329,7 @@ export default function Home() {
     const decrypted = decryptMessage(content, secret);
     if (decrypted) {
       let finalContent = decrypted;
+      let type: Message['type'] = 'text';
       let replyToId = undefined;
       let replyToContent = undefined;
       
@@ -325,11 +337,14 @@ export default function Home() {
         const parsed = JSON.parse(decrypted);
         if (parsed.content !== undefined) {
           finalContent = parsed.content;
+          type = parsed.type || 'text';
           replyToId = parsed.replyToId;
           replyToContent = parsed.replyToContent;
         }
       } catch (e) {
         // Fallback for legacy plain text messages
+        if (finalContent.startsWith('LOC:')) type = 'location';
+        else if (finalContent.startsWith('data:image')) type = 'image';
       }
 
       console.log(`[Decryption] Success: "${finalContent.slice(0, 10)}..." from ${from}`);
@@ -339,6 +354,7 @@ export default function Home() {
         receiverId: user.id,
         chatId: from,
         content: finalContent,
+        type: type,
         timestamp: timestamp || Date.now(),
         status: normalize(activeChatIdRef.current || '') === normalize(from) ? 'read' : 'delivered',
         replyToId,
@@ -356,9 +372,10 @@ export default function Home() {
           const isAppBackgrounded = typeof document !== 'undefined' && document.visibilityState === 'hidden';
           const isActiveChat = normalize(activeChatIdRef.current || '') === normalizedFrom;
           
+          const preview = type === 'image' ? '📷 Photo' : type === 'location' ? '📍 Location' : finalContent;
           addContact({ 
             ...contact, 
-            lastMessage: decrypted, 
+            lastMessage: preview, 
             lastMessageTime: msg.timestamp,
             unreadCount: (!isActiveChat || isAppBackgrounded) ? (contact.unreadCount || 0) + 1 : 0
           });
@@ -390,12 +407,15 @@ export default function Home() {
     const normalizedFrom = normalize(from);
     const secret = deriveSharedSecret(localUser.publicKey, (window as any).myPrivateKey, publicKey);
     sharedSecrets.current[normalizedFrom] = secret;
+    
+    const existing = useChatStore.getState().contacts.find(c => normalize(c.id) === normalizedFrom);
     const newContact = { 
+      ...existing,
       id: from, 
-      username: username || 'Anonymous', 
+      username: username || existing?.username || 'Anonymous', 
       publicKey, 
       sharedSecret: secret,
-      profilePic: profilePic
+      profilePic: profilePic || existing?.profilePic
     };
     addContact(newContact);
     saveContact(newContact).then(() => {
@@ -455,12 +475,23 @@ export default function Home() {
 
   const handleDeleteEntireChat = async () => {
     if (!activeChatId) return;
-    if (confirm('Delete this entire chat and remove from messages?')) {
-      await deleteMessagesForChat(activeChatId);
-      await deleteContact(activeChatId);
-      useChatStore.getState().removeContact(activeChatId);
-      setActiveChatId(null);
-      setMessages([]);
+    const mode = confirm('Delete for everyone? Click Cancel to delete only for me.') ? 'everyone' : 'me';
+    
+    await deleteMessagesForChat(activeChatId);
+    await deleteContact(activeChatId);
+    useChatStore.getState().removeContact(activeChatId);
+    setActiveChatId(null);
+    setMessages([]);
+
+    if (mode === 'everyone') {
+      const socket = getSocket();
+      if (socket) {
+        socket.emit('message_relay', {
+          to: activeChatId,
+          type: 'delete_chat',
+          content: 'ALL'
+        });
+      }
     }
   };
 
@@ -517,7 +548,7 @@ export default function Home() {
     setIsSettingsOpen(false);
   };
 
-  const sendMessage = async (content: string, replyTo?: { id: string, content: string }) => {
+  const sendMessage = async (content: string, type: Message['type'] = 'text', replyTo?: { id: string, content: string }) => {
     if (!activeChatId || !currentUser) return;
     
     const normalizedChatId = normalize(activeChatId);
@@ -536,7 +567,7 @@ export default function Home() {
           if (identity && currentUser) {
             handleIdentityReceived(activeChatId, identity, currentUser);
             // Wait a tiny bit for state to settle then retry
-            setTimeout(() => sendMessage(content, replyTo), 50);
+            setTimeout(() => sendMessage(content, type, replyTo), 50);
           } else {
             alert(`Unable to find user ${activeChatId} on the network. Make sure they are registered.`);
           }
@@ -550,6 +581,7 @@ export default function Home() {
     const msgId = uuidv4();
     const payload = JSON.stringify({ 
       content,
+      type,
       replyToId: replyTo?.id,
       replyToContent: replyTo?.content 
     });
@@ -562,6 +594,7 @@ export default function Home() {
       receiverId: activeChatId,
       chatId: activeChatId, // THE OTHER PERSON
       content: content,
+      type: type,
       timestamp: Date.now(),
       status: 'sent',
       replyToId: replyTo?.id,
@@ -573,29 +606,28 @@ export default function Home() {
     setMessages((prev) => [...prev, msg].sort((a, b) => a.timestamp - b.timestamp));
 
     // Move contact to top of list and update snippet
-    const contact = useChatStore.getState().contacts.find(c => c.id === activeChatId);
+    const contact = useChatStore.getState().contacts.find(c => normalize(c.id) === normalizedChatId);
     if (contact) {
+      const preview = type === 'image' ? '📷 Photo' : type === 'location' ? '📍 Location' : content;
       addContact({ 
         ...contact, 
-        lastMessage: content, 
-        lastMessageTime: msg.timestamp 
+        lastMessage: preview, 
+        lastMessageTime: msg.timestamp,
+        unreadCount: 0
       });
     }
 
-    // 4. ALWAYS send via Relay as well (or as fallback) for 100% reliability
-    // The receiver will deduplicate using the msg.id
+    // 4. Send via Relay
     const socket = getSocket();
     if (socket) {
-      console.log(`[Relay] Sending ${msg.id.slice(0, 8)} to ${activeChatId}`);
       socket.emit('message_relay', {
         to: activeChatId,
         id: msg.id,
         content: encrypted,
         timestamp: msg.timestamp
       });
-    } else {
-      console.error('[Relay] Failed: Socket disconnected');
     }
+    setReplyingTo(null);
   };
 
   const handleTyping = (isTyping: boolean) => {

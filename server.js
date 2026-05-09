@@ -66,21 +66,21 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("identity_broadcast", ({ to, publicKey, username }) => {
+  socket.on("identity_broadcast", ({ to, publicKey, username, profilePic }) => {
     const targetId = normalize(to);
     const targetSocketId = users.get(targetId);
     if (targetSocketId) {
-      io.to(targetSocketId).emit("identity_broadcast", { from: rawUserId, publicKey, username });
+      io.to(targetSocketId).emit("identity_broadcast", { from: rawUserId, publicKey, username, profilePic });
     } else {
       if (!offlineMessages.has(targetId)) offlineMessages.set(targetId, []);
-      offlineMessages.get(targetId).push({ type: 'identity', from: rawUserId, publicKey, username });
+      offlineMessages.get(targetId).push({ type: 'identity', from: rawUserId, publicKey, username, profilePic });
     }
   });
 
-  socket.on("register_identity", ({ publicKey, username }) => {
+  socket.on("register_identity", ({ publicKey, username, profilePic }) => {
     if (userId) {
-      directory.set(userId, { publicKey, username, rawId: rawUserId });
-      console.log(`Identity registered for ${userId}`);
+      directory.set(userId, { publicKey, username, profilePic, rawId: rawUserId });
+      console.log(`Identity registered for ${userId} (with ${profilePic ? 'photo' : 'no photo'})`);
     }
   });
 

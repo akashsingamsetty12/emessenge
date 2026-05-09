@@ -13,6 +13,13 @@ interface ChatListProps {
 export const ChatList = ({ onOpenSettings }: ChatListProps) => {
   const { contacts, setActiveChatId, activeChatId, currentUser, removeContact, logout } = useChatStore();
 
+  const formatPreview = (msg: string | undefined) => {
+    if (!msg) return 'End-to-end encrypted';
+    if (msg.startsWith('LOC:')) return '📍 Location';
+    if (msg.startsWith('data:image')) return '📷 Photo';
+    return msg;
+  };
+
   const handleDeleteChat = async (e: React.MouseEvent, contactId: string) => {
     e.stopPropagation(); // Don't open the chat when clicking delete
     if (confirm('Delete this entire chat and remove from messages?')) {
@@ -103,7 +110,7 @@ export const ChatList = ({ onOpenSettings }: ChatListProps) => {
                 </div>
                 <div className="flex justify-between items-center">
                   <p className={`text-xs truncate transition-colors ${contact.unreadCount && contact.unreadCount > 0 ? 'text-zinc-200 font-bold' : 'text-zinc-500'}`}>
-                    {contact.lastMessage || 'End-to-end encrypted'}
+                    {formatPreview(contact.lastMessage)}
                   </p>
                   <div className="flex items-center gap-2 ml-2">
                     {contact.unreadCount && contact.unreadCount > 0 && (

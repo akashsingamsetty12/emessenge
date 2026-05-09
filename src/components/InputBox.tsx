@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Paperclip, Send, MapPin, Smile, X, Reply } from 'lucide-react';
 
 interface InputBoxProps {
-  onSend: (content: string, replyTo?: { id: string, content: string }) => void;
+  onSend: (content: string, type: 'text' | 'image' | 'location' | 'video', replyTo?: { id: string, content: string }) => void;
   onTyping: (isTyping: boolean) => void;
   replyingTo: { id: string, content: string } | null;
   onCancelReply: () => void;
@@ -23,7 +23,7 @@ export function InputBox({ onSend, onTyping, replyingTo, onCancelReply }: InputB
 
   const handleSend = () => {
     if (text.trim()) {
-      onSend(text, replyingTo || undefined);
+      onSend(text, 'text', replyingTo || undefined);
       setText('');
       onTyping(false);
       onCancelReply();
@@ -33,10 +33,12 @@ export function InputBox({ onSend, onTyping, replyingTo, onCancelReply }: InputB
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      const type = file.type.startsWith('video') ? 'video' : 'image';
       const reader = new FileReader();
       reader.onload = (event) => {
         const base64 = event.target?.result as string;
-        onSend(base64);
+        onSend(base64, type, replyingTo || undefined);
+        onCancelReply();
       };
       reader.readAsDataURL(file);
     }
@@ -48,7 +50,8 @@ export function InputBox({ onSend, onTyping, replyingTo, onCancelReply }: InputB
       navigator.geolocation.getCurrentPosition((position) => {
         const { latitude, longitude } = position.coords;
         console.log(`Location found: ${latitude}, ${longitude}`);
-        onSend(`LOC:${latitude},${longitude}`);
+        onSend(`LOC:${latitude},${longitude}`, 'location', replyingTo || undefined);
+        onCancelReply();
       }, (err) => {
         console.error('Location error:', err);
         alert("Failed to get location: " + err.message);
@@ -69,7 +72,7 @@ export function InputBox({ onSend, onTyping, replyingTo, onCancelReply }: InputB
             <div className="border-l-2 border-purple-500 pl-3 overflow-hidden">
               <p className="text-[10px] font-bold text-purple-400 uppercase tracking-widest">Replying to</p>
               <p className="text-xs text-zinc-400 truncate italic">
-                {replyingTo.content.startsWith('data:image') ? '📷 Photo' : (replyingTo.content.startsWith('LOC:') ? '📍 Location' : replyingTo.content)}
+                {replyingTo.content.startsWith('data:video') ? '🎬 Video' : (replyingTo.content.startsWith('data:image') ? '📷 Photo' : (replyingTo.content.startsWith('LOC:') ? '📍 Location' : replyingTo.content))}
               </p>
             </div>
           </div>
@@ -93,7 +96,7 @@ export function InputBox({ onSend, onTyping, replyingTo, onCancelReply }: InputB
           type="file" 
           ref={fileInputRef} 
           className="hidden" 
-          accept="image/*"
+          accept="image/*,video/*"
           onChange={handleFileChange}
         />
         

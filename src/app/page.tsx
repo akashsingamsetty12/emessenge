@@ -1205,7 +1205,7 @@ export default function Home() {
                     className="w-full bg-black/50 text-white rounded-xl px-4 py-3 text-sm border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all font-mono"
                   />
                   <button
-                    onClick={handleAddContact}
+                    onClick={() => handleAddContact()}
                     className="w-full bg-gradient-to-r from-purple-600 to-cyan-600 px-4 py-3 rounded-xl text-sm font-black shadow-lg shadow-purple-500/10 hover:brightness-110 active:scale-[0.98] transition-all"
                   >
                     ESTABLISH CONNECTION

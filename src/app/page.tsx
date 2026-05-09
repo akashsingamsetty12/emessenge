@@ -11,7 +11,9 @@ import { MessageBubble } from '@/components/MessageBubble';
 import { InputBox } from '@/components/InputBox';
 import { auth, RecaptchaVerifier, signInWithPhoneNumber, ConfirmationResult } from '@/lib/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
-import { UserX } from 'lucide-react';
+import { UserX, Phone, Video as VideoIcon } from 'lucide-react';
+import { PeerConnection } from '@/lib/peer';
+import { CallOverlay } from '@/components/CallOverlay';
 
 export default function Home() {
   const normalize = (id: string) => id ? id.replace(/\D/g, '') : '';
@@ -27,10 +29,29 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState('');
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const [peerStatuses, setPeerStatuses] = useState<{ [key: string]: boolean }>({});
   const sharedSecrets = useRef<{ [key: string]: string }>({});
+  const secretsDerivedFor = useRef<string>(''); // Stores currentUser.id + contacts version
   const activeChatIdRef = useRef<string | null>(null);
   const currentUserRef = useRef<User | null>(null);
+  const [replyingTo, setReplyingTo] = useState<{ id: string, content: string } | null>(null);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isServerSettingsOpen, setIsServerSettingsOpen] = useState(false);
+  const [serverIp, setServerIp] = useState('');
+  const [isConnected, setIsConnected] = useState(false);
+  const [newUsername, setNewUsername] = useState('');
+  const [newProfilePic, setNewProfilePic] = useState('');
+  const photoInputRef = useRef<HTMLInputElement>(null);
+
+  // Call State
+  const [callState, setCallState] = useState<'idle' | 'calling' | 'receiving' | 'active'>('idle');
+  const [isVideoCall, setIsVideoCall] = useState(false);
+  const [callerInfo, setCallerInfo] = useState({ username: '', profilePic: '' });
+  const [callerId, setCallerId] = useState('');
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isCameraOff, setIsCameraOff] = useState(false);
+  const peerRef = useRef<PeerConnection | null>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -54,6 +75,10 @@ export default function Home() {
     initSodium().then(() => {
       if (!isMounted) return;
 
+      if (typeof window !== 'undefined') {
+        setServerIp(localStorage.getItem('server_ip') || '');
+      }
+
       // Load saved contacts with their latest messages
       getContacts().then(async (saved: Contact[]) => {
         if (!isMounted) return;
@@ -76,21 +101,33 @@ export default function Home() {
         onAuthStateChanged(auth, async (user) => {
           if (!isMounted) return;
           if (user && user.phoneNumber) {
-            const savedPublicKey = await getKey(`${user.phoneNumber}_public`);
-            const savedPrivateKey = await getKey(`${user.phoneNumber}_private`);
-            const savedUsername = await getKey(`${user.phoneNumber}_username`);
+            const phoneId = user.phoneNumber;
+            let publicKey = await getKey(`${phoneId}_public`);
+            let privateKey = await getKey(`${phoneId}_private`);
+            let savedUsername = await getKey(`${phoneId}_username`);
+            let savedProfilePic = await getKey(`${phoneId}_profile_pic`);
 
-            if (savedPublicKey && savedPrivateKey && isMounted) {
+            if (!publicKey || !privateKey) {
+              console.log('[Security] No local keys found for authenticated user. Generating new pair...');
+              const keyPair = generateKeyPair();
+              publicKey = keyPair.publicKey;
+              privateKey = keyPair.privateKey;
+              await saveKey(`${phoneId}_public`, publicKey);
+              await saveKey(`${phoneId}_private`, privateKey);
+            }
+
+            if (isMounted) {
               const restoredUser = {
-                id: user.phoneNumber,
-                username: savedUsername || 'Anonymous',
-                phoneNumber: user.phoneNumber,
-                publicKey: savedPublicKey,
+                id: phoneId,
+                username: savedUsername || `User-${phoneId.slice(-4)}`,
+                phoneNumber: phoneId,
+                publicKey: publicKey,
+                profilePic: savedProfilePic
               };
               
               setCurrentUser(restoredUser);
               if (typeof window !== 'undefined') {
-                (window as any).myPrivateKey = savedPrivateKey;
+                (window as any).myPrivateKey = privateKey;
               }
               
               const socket = initSocket(restoredUser.id);
@@ -114,13 +151,18 @@ export default function Home() {
     if (currentUser && typeof window !== 'undefined') {
       const privateKey = (window as any).myPrivateKey;
       if (privateKey) {
-        console.log('[Security] Initializing key vault for:', currentUser.username);
+        const derivationKey = `${currentUser.id}:${contacts.length}:${contacts.map(c => c.publicKey.slice(0, 5)).join(',')}`;
+        if (secretsDerivedFor.current === derivationKey) return;
+
+        console.log('[Security] Syncing key vault for:', currentUser.username);
         contacts.forEach(contact => {
-          if (contact.publicKey) {
+          const normalizedId = normalize(contact.id);
+          if (contact.publicKey && !sharedSecrets.current[normalizedId]) {
             const secret = deriveSharedSecret(currentUser.publicKey, privateKey, contact.publicKey);
-            sharedSecrets.current[normalize(contact.id)] = secret;
+            sharedSecrets.current[normalizedId] = secret;
           }
         });
+        secretsDerivedFor.current = derivationKey;
       }
     }
   }, [currentUser, contacts]);
@@ -197,15 +239,34 @@ export default function Home() {
   };
 
   const setupSocketListeners = (socket: any, initialUser: User) => {
+    const register = () => {
+      console.log(`[Socket] Registering identity for ${initialUser.id}...`);
+      socket.emit('client_ready');
+      socket.emit('register_identity', { 
+        publicKey: initialUser.publicKey, 
+        username: initialUser.username,
+        profilePic: initialUser.profilePic
+      });
+    };
+
+    socket.on('connect', () => {
+      setIsConnected(true);
+      register();
+    });
+    if (socket.connected) {
+      setIsConnected(true);
+      register();
+    }
+
     socket.on('message_relay', (data: any) => {
       console.log(`[Socket] Data arrived from relay:`, data.type);
       processIncomingData(data.from, data);
     });
+
     socket.on('identity_broadcast', (data: any) => {
       const user = currentUserRef.current;
-      if (user) {
+      if (user && data.from !== user.id) {
         handleIdentityReceived(data.from, data, user);
-        socket.emit('identity_broadcast', { to: data.from, publicKey: user.publicKey, username: user.username });
       }
     });
 
@@ -213,9 +274,17 @@ export default function Home() {
       useChatStore.getState().setTyping(from, isTyping);
     });
 
-    // 3. Signal ready
-    socket.emit('client_ready');
-    socket.emit('register_identity', { publicKey: initialUser.publicKey, username: initialUser.username });
+    socket.on('disconnect', () => {
+      console.log('[Socket] Disconnected from relay');
+      setIsConnected(false);
+    });
+
+    socket.on('signal', ({ from, signal }: { from: string, signal: any }) => {
+      console.log(`[Call] Received signal from ${from}`);
+      if (peerRef.current) {
+        peerRef.current.signal(signal);
+      }
+    });
   };
 
   const processIncomingData = async (from: string, payload: any) => {
@@ -224,7 +293,7 @@ export default function Home() {
     console.log(`[Incoming] ${type || 'message'} from ${from}`);
 
     if (type === 'identity') {
-      if (currentUser) handleIdentityReceived(from, content, currentUser);
+      if (currentUser) handleIdentityReceived(from, content || payload, currentUser);
       return;
     }
 
@@ -243,13 +312,53 @@ export default function Home() {
       return;
     }
 
+    if (type === 'delete_chat') {
+      await deleteMessagesForChat(from);
+      await deleteContact(from);
+      useChatStore.getState().removeContact(from);
+      if (normalize(activeChatIdRef.current || '') === normalize(from)) {
+        setActiveChatId(null);
+        setMessages([]);
+      }
+      return;
+    }
+
+    if (type === 'identity_broadcast') {
+      const user = currentUserRef.current;
+      if (user) handleIdentityReceived(from, content, user);
+      return;
+    }
+
     if (type === 'typing') {
       useChatStore.getState().setTyping(from, content);
       return;
     }
 
+    if (type === 'call_request') {
+      const { isVideo, username, profilePic } = content;
+      setCallerId(from);
+      setCallerInfo({ username, profilePic });
+      setIsVideoCall(isVideo);
+      setCallState('receiving');
+      return;
+    }
+
+    if (type === 'call_response') {
+      if (content === 'accepted') {
+        // Handled via simple-peer connection
+      } else {
+        cleanupCall();
+      }
+      return;
+    }
+
+    if (type === 'call_end') {
+      cleanupCall();
+      return;
+    }
+
     if (type === 'key_exchange') {
-      if (currentUser) handleIdentityReceived(from, content, currentUser);
+      if (currentUser) handleIdentityReceived(from, content || payload, currentUser);
       return;
     }
 
@@ -276,14 +385,37 @@ export default function Home() {
 
     const decrypted = decryptMessage(content, secret);
     if (decrypted) {
-      console.log(`[Decryption] Success: "${decrypted.slice(0, 10)}..." from ${from}`);
+      let finalContent = decrypted;
+      let type: Message['type'] = 'text';
+      let replyToId = undefined;
+      let replyToContent = undefined;
+      
+      try {
+        const parsed = JSON.parse(decrypted);
+        if (parsed.content !== undefined) {
+          finalContent = parsed.content;
+          type = parsed.type || 'text';
+          replyToId = parsed.replyToId;
+          replyToContent = parsed.replyToContent;
+        }
+      } catch (e) {
+        // Fallback for legacy plain text messages
+        if (finalContent.startsWith('LOC:')) type = 'location';
+        else if (finalContent.startsWith('data:image')) type = 'image';
+      }
+
+      console.log(`[Decryption] Success: "${finalContent.slice(0, 10)}..." from ${from}`);
       const msg: Message = {
         id: id || uuidv4(),
         senderId: from,
         receiverId: user.id,
-        content: decrypted,
+        chatId: from,
+        content: finalContent,
+        type: type,
         timestamp: timestamp || Date.now(),
-        status: normalize(activeChatIdRef.current || '') === normalize(from) ? 'read' : 'delivered'
+        status: normalize(activeChatIdRef.current || '') === normalize(from) ? 'read' : 'delivered',
+        replyToId,
+        replyToContent
       };
 
       // Atomic Save & Update
@@ -297,9 +429,10 @@ export default function Home() {
           const isAppBackgrounded = typeof document !== 'undefined' && document.visibilityState === 'hidden';
           const isActiveChat = normalize(activeChatIdRef.current || '') === normalizedFrom;
           
+          const preview = type === 'image' ? '📷 Photo' : type === 'location' ? '📍 Location' : finalContent;
           addContact({ 
             ...contact, 
-            lastMessage: decrypted, 
+            lastMessage: preview, 
             lastMessageTime: msg.timestamp,
             unreadCount: (!isActiveChat || isAppBackgrounded) ? (contact.unreadCount || 0) + 1 : 0
           });
@@ -327,54 +460,102 @@ export default function Home() {
       console.warn(`[Identity] Received empty identity payload from ${from}`);
       return;
     }
-    const { publicKey, username } = payload;
+    const { publicKey, username, profilePic } = payload;
+    console.log(`[Identity] Updating profile for ${from}. Photo: ${profilePic ? 'Present' : 'Missing'}`);
     const normalizedFrom = normalize(from);
     const secret = deriveSharedSecret(localUser.publicKey, (window as any).myPrivateKey, publicKey);
     sharedSecrets.current[normalizedFrom] = secret;
-    const newContact = { id: from, username: username || 'Anonymous', publicKey, sharedSecret: secret };
+    
+    const existing = useChatStore.getState().contacts.find(c => normalize(c.id) === normalizedFrom);
+    
+    // Skip if nothing changed to prevent loops
+    if (existing && existing.username === username && existing.profilePic === profilePic && existing.publicKey === publicKey) {
+      return;
+    }
+
+    const newContact = { 
+      ...existing,
+      id: from, 
+      username: username || existing?.username || 'Anonymous', 
+      publicKey, 
+      sharedSecret: secret,
+      profilePic: profilePic || existing?.profilePic
+    };
     addContact(newContact);
     saveContact(newContact).then(() => {
-      console.log('Contact persisted for normalized ID:', normalizedFrom);
+      // Only log if it's a meaningful update
+      if (!existing || existing.profilePic !== profilePic) {
+        console.log('[Sync] Profile persisted for:', from);
+      }
     });
     sharedSecrets.current[normalizedFrom] = secret;
   };
 
 
-  // Separated connect logic
+  // Refresh all contacts' info on startup
   useEffect(() => {
-    // When peers connect, they might need to exchange keys
-    // This is handled in onData 'key_exchange'
-  }, []);
+    if (currentUser && contacts.length > 0) {
+      const socket = getSocket();
+      if (socket && socket.connected) {
+        console.log('[Sync] Refreshing contact directory...');
+        contacts.forEach(contact => {
+          socket.emit('get_identity', contact.id, (identity: any) => {
+            if (identity) {
+              handleIdentityReceived(contact.id, identity, currentUser);
+            }
+          });
+        });
+      }
+    }
+  }, [currentUser?.id, contacts.length]);
 
-  const handleAddContact = () => {
-    const id = `+${normalize(targetIdInput)}`;
-    if (!id || id === currentUser?.id) return;
+  const handleAddContact = (id?: string) => {
+    const targetId = typeof id === 'string' ? id : prompt('Enter phone number (e.g., +91888...):');
+    if (!targetId) return;
+
+    const cleanDigits = normalize(targetId);
+    let cleanId = '';
+    
+    if (targetId.startsWith('+')) {
+      cleanId = targetId;
+    } else if (cleanDigits.length === 10) {
+      // If 10 digits, assume it's a local number and prepend the sender's country code if available
+      const myCountryCode = (currentUser?.id && currentUser.id.startsWith('+')) 
+        ? currentUser.id.slice(0, currentUser.id.length - 10) 
+        : '+91';
+      cleanId = `${myCountryCode}${cleanDigits}`;
+    } else {
+      cleanId = `+${cleanDigits}`;
+    }
+
+    if (normalize(cleanId) === normalize(currentUser?.id || '')) return;
     
     // Immediately show the chat window for this ID
-    setActiveChatId(id);
+    setActiveChatId(cleanId);
     
     // Add a temporary contact entry if it doesn't exist
-    if (!contacts.find(c => c.id === id)) {
-      addContact({ id, username: `User-${id.slice(-4)}`, publicKey: '' });
+    if (!contacts.find(c => c.id === cleanId)) {
+      const tempContact = { id: cleanId, username: `User-${cleanId.slice(-4)}`, publicKey: '' };
+      addContact(tempContact);
+      saveContact(tempContact);
     }
 
     const socket = getSocket();
     if (socket && currentUser) {
-      // 1. Immediately save the contact locally so it persists
-      const tempContact = { id, username: `User-${id.slice(-4)}`, publicKey: '' };
-      addContact(tempContact);
-      saveContact(tempContact);
-
-      // 2. Try to fetch their key from the server for instant chat
-      socket.emit('get_identity', id, (identity: any) => {
+      // 1. Try to fetch their key from the server for instant chat
+      socket.emit('get_identity', cleanId, (identity: any) => {
         if (identity && currentUser) {
-          handleIdentityReceived(id, identity, currentUser);
-          console.log('[Instant] Keys discovered via server directory');
+          handleIdentityReceived(cleanId, identity, currentUser);
         }
       });
 
-      // 3. Also broadcast our identity to them directly
-      socket.emit('identity_broadcast', { to: id, publicKey: currentUser.publicKey, username: currentUser.username });
+      // 2. Also broadcast our identity to them directly
+      socket.emit('identity_broadcast', { 
+        to: cleanId, 
+        publicKey: currentUser.publicKey, 
+        username: currentUser.username,
+        profilePic: currentUser.profilePic
+      });
     }
 
     setTargetIdInput('');
@@ -390,12 +571,23 @@ export default function Home() {
 
   const handleDeleteEntireChat = async () => {
     if (!activeChatId) return;
-    if (confirm('Delete this entire chat and remove from messages?')) {
-      await deleteMessagesForChat(activeChatId);
-      await deleteContact(activeChatId);
-      useChatStore.getState().removeContact(activeChatId);
-      setActiveChatId(null);
-      setMessages([]);
+    const mode = confirm('Delete for everyone? Click Cancel to delete only for me.') ? 'everyone' : 'me';
+    
+    await deleteMessagesForChat(activeChatId);
+    await deleteContact(activeChatId);
+    useChatStore.getState().removeContact(activeChatId);
+    setActiveChatId(null);
+    setMessages([]);
+
+    if (mode === 'everyone') {
+      const socket = getSocket();
+      if (socket) {
+        socket.emit('message_relay', {
+          to: activeChatId,
+          type: 'delete_chat',
+          content: 'ALL'
+        });
+      }
     }
   };
 
@@ -419,7 +611,41 @@ export default function Home() {
     }
   };
 
-  const sendMessage = async (content: string) => {
+  const handleReply = (id: string, content: string) => {
+    setReplyingTo({ id, content });
+  };
+
+  const handleUpdateProfile = async () => {
+    if (!currentUser || !newUsername.trim()) return;
+    const updatedUser = { ...currentUser, username: newUsername.trim(), profilePic: newProfilePic };
+    setCurrentUser(updatedUser);
+    await saveKey(`${currentUser.id}_username`, newUsername.trim());
+    if (newProfilePic) await saveKey(`${currentUser.id}_profile_pic`, newProfilePic);
+    
+    // Broadcast change to relay server
+    const socket = getSocket();
+    if (socket) {
+      socket.emit('register_identity', { 
+        publicKey: currentUser.publicKey, 
+        username: newUsername.trim(),
+        profilePic: newProfilePic
+      });
+
+      // Notify all known contacts immediately so they see the new profile pic
+      const contacts = useChatStore.getState().contacts;
+      contacts.forEach(contact => {
+        socket.emit('identity_broadcast', { 
+          to: contact.id, 
+          publicKey: currentUser.publicKey, 
+          username: newUsername.trim(),
+          profilePic: newProfilePic
+        });
+      });
+    }
+    setIsSettingsOpen(false);
+  };
+
+  const sendMessage = async (content: string, type: Message['type'] = 'text', replyTo?: { id: string, content: string }) => {
     if (!activeChatId || !currentUser) return;
     
     const normalizedChatId = normalize(activeChatId);
@@ -438,7 +664,7 @@ export default function Home() {
           if (identity && currentUser) {
             handleIdentityReceived(activeChatId, identity, currentUser);
             // Wait a tiny bit for state to settle then retry
-            setTimeout(() => sendMessage(content), 50);
+            setTimeout(() => sendMessage(content, type, replyTo), 50);
           } else {
             alert(`Unable to find user ${activeChatId} on the network. Make sure they are registered.`);
           }
@@ -449,17 +675,27 @@ export default function Home() {
 
     if (!secret) return;
 
-    const encrypted = encryptMessage(content, secret);
+    const msgId = uuidv4();
+    const payload = JSON.stringify({ 
+      content,
+      type,
+      replyToId: replyTo?.id,
+      replyToContent: replyTo?.content 
+    });
+    const encrypted = encryptMessage(payload, secret);
     
     // 1. Create message object
     const msg: Message = {
-      id: uuidv4(),
+      id: msgId,
       senderId: currentUser.id,
       receiverId: activeChatId,
       chatId: activeChatId, // THE OTHER PERSON
       content: content,
+      type: type,
       timestamp: Date.now(),
       status: 'sent',
+      replyToId: replyTo?.id,
+      replyToContent: replyTo?.content
     };
     
     // 2. Save and display locally immediately
@@ -467,34 +703,177 @@ export default function Home() {
     setMessages((prev) => [...prev, msg].sort((a, b) => a.timestamp - b.timestamp));
 
     // Move contact to top of list and update snippet
-    const contact = useChatStore.getState().contacts.find(c => c.id === activeChatId);
+    const contact = useChatStore.getState().contacts.find(c => normalize(c.id) === normalizedChatId);
     if (contact) {
+      const preview = type === 'image' ? '📷 Photo' : type === 'location' ? '📍 Location' : content;
       addContact({ 
         ...contact, 
-        lastMessage: content, 
-        lastMessageTime: msg.timestamp 
+        lastMessage: preview, 
+        lastMessageTime: msg.timestamp,
+        unreadCount: 0
       });
     }
 
-    // 4. ALWAYS send via Relay as well (or as fallback) for 100% reliability
-    // The receiver will deduplicate using the msg.id
+    // 4. Send via Relay
     const socket = getSocket();
     if (socket) {
-      console.log(`[Relay] Sending ${msg.id.slice(0, 8)} to ${activeChatId}`);
       socket.emit('message_relay', {
         to: activeChatId,
         id: msg.id,
         content: encrypted,
         timestamp: msg.timestamp
       });
-    } else {
-      console.error('[Relay] Failed: Socket disconnected');
     }
+    setReplyingTo(null);
   };
 
   const handleTyping = (isTyping: boolean) => {
     if (!activeChatId) return;
     getSocket()?.emit('typing', { to: activeChatId, isTyping });
+  };
+
+  const startCall = async (isVideo: boolean) => {
+    if (!activeChatId || !currentUser) return;
+    
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: isVideo, 
+        audio: true 
+      });
+      setLocalStream(stream);
+      setIsVideoCall(isVideo);
+      setCallState('calling');
+      setCallerId(activeChatId);
+      const target = contacts.find(c => c.id === activeChatId);
+      setCallerInfo({ username: target?.username || activeChatId, profilePic: target?.profilePic || '' });
+
+      const peer = new PeerConnection({
+        initiator: true,
+        stream,
+        onSignal: (data) => {
+          getSocket()?.emit('signal', { to: activeChatId, signal: data });
+        },
+        onConnect: () => console.log('[Call] WebRTC Connected'),
+        onData: (data) => console.log('[Call] Data:', data),
+        onError: (err) => {
+          console.error('[Call] Error:', err);
+          cleanupCall();
+        },
+        onStream: (remote) => setRemoteStream(remote)
+      });
+
+      peerRef.current = peer;
+
+      getSocket()?.emit('message_relay', {
+        to: activeChatId,
+        type: 'call_request',
+        content: { 
+          isVideo, 
+          username: currentUser.username, 
+          profilePic: currentUser.profilePic 
+        }
+      });
+    } catch (err) {
+      console.error('[Call] Failed to get media:', err);
+      alert('Could not access camera/microphone');
+    }
+  };
+
+  const answerCall = async () => {
+    if (!callerId || !currentUser) return;
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: isVideoCall, 
+        audio: true 
+      });
+      setLocalStream(stream);
+      setCallState('active');
+
+      const peer = new PeerConnection({
+        initiator: false,
+        stream,
+        onSignal: (data) => {
+          getSocket()?.emit('signal', { to: callerId, signal: data });
+        },
+        onConnect: () => console.log('[Call] WebRTC Connected'),
+        onData: (data) => console.log('[Call] Data:', data),
+        onError: (err) => {
+          console.error('[Call] Error:', err);
+          cleanupCall();
+        },
+        onStream: (remote) => setRemoteStream(remote)
+      });
+
+      peerRef.current = peer;
+
+      getSocket()?.emit('message_relay', {
+        to: callerId,
+        type: 'call_response',
+        content: 'accepted'
+      });
+    } catch (err) {
+      console.error('[Call] Failed to get media:', err);
+      cleanupCall();
+    }
+  };
+
+  const declineCall = () => {
+    if (callerId) {
+      getSocket()?.emit('message_relay', {
+        to: callerId,
+        type: 'call_response',
+        content: 'declined'
+      });
+    }
+    cleanupCall();
+  };
+
+  const endCall = () => {
+    if (callerId) {
+      getSocket()?.emit('message_relay', {
+        to: callerId,
+        type: 'call_end',
+        content: 'ended'
+      });
+    }
+    cleanupCall();
+  };
+
+  const cleanupCall = () => {
+    if (peerRef.current) {
+      peerRef.current.destroy();
+      peerRef.current = null;
+    }
+    if (localStream) {
+      localStream.getTracks().forEach(track => track.stop());
+      setLocalStream(null);
+    }
+    setRemoteStream(null);
+    setCallState('idle');
+    setCallerId('');
+    setIsMuted(false);
+    setIsCameraOff(false);
+  };
+
+  const toggleMic = () => {
+    if (localStream) {
+      const audioTrack = localStream.getAudioTracks()[0];
+      if (audioTrack) {
+        audioTrack.enabled = !audioTrack.enabled;
+        setIsMuted(!audioTrack.enabled);
+      }
+    }
+  };
+
+  const toggleVideo = () => {
+    if (localStream) {
+      const videoTrack = localStream.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.enabled = !videoTrack.enabled;
+        setIsCameraOff(!videoTrack.enabled);
+      }
+    }
   };
 
   useEffect(() => {
@@ -631,38 +1010,121 @@ export default function Home() {
                 </button>
               </>
             )}
-            <p className="text-[10px] text-center text-zinc-600 font-mono">
+            <p className="text-[10px] text-center text-zinc-600 font-mono mb-2">
               SECURE OTP ACCESS • E2EE PERSISTENCE
             </p>
+
+            <div className="pt-2 border-t border-white/5">
+              <button 
+                onClick={() => setIsServerSettingsOpen(!isServerSettingsOpen)}
+                className="w-full text-[10px] text-zinc-700 hover:text-zinc-500 font-mono uppercase tracking-widest transition-colors flex items-center justify-center gap-2"
+              >
+                <span>{isServerSettingsOpen ? '▼' : '▶'} Server Settings</span>
+              </button>
+              
+              {isServerSettingsOpen && (
+                <div className="mt-4 space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-bold text-zinc-600 uppercase ml-1">Laptop IP (e.g. 192.168.1.5)</label>
+                    <input
+                      type="text"
+                      placeholder="Enter Laptop IP"
+                      value={serverIp}
+                      onChange={(e) => {
+                        setServerIp(e.target.value);
+                        localStorage.setItem('server_ip', e.target.value);
+                      }}
+                      className="w-full bg-zinc-900/50 text-white rounded-xl px-4 py-2 border border-zinc-800 focus:outline-none focus:ring-1 focus:ring-purple-500/50 transition-all placeholder:text-zinc-700 font-mono text-xs"
+                    />
+                  </div>
+                  <p className="text-[9px] text-zinc-600 italic px-1">
+                    * Restart app after changing IP to apply settings.
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
     );
   }
 
+  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setNewProfilePic(event.target?.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   return (
-    <div className="h-screen bg-black flex text-white overflow-hidden">
-      <ChatList />
+    <div className="h-screen bg-black flex text-white overflow-hidden relative">
+      <div className={`${activeChatId ? 'hidden md:flex' : 'flex'} w-full md:w-80 h-full border-r border-white/5`}>
+        <ChatList 
+          onOpenSettings={() => {
+            setNewUsername(currentUser?.username || '');
+            setNewProfilePic(currentUser?.profilePic || '');
+            setIsSettingsOpen(true);
+          }} 
+          onAddContact={handleAddContact}
+        />
+      </div>
       
-      <div className="flex-1 flex flex-col relative">
+      <div className={`${activeChatId ? 'flex' : 'hidden md:flex'} flex-1 flex flex-col relative h-full bg-zinc-950`}>
         {activeChatId ? (
           <>
             <div className="p-4 border-b border-zinc-800/50 flex justify-between items-center bg-zinc-900/30 backdrop-blur-md sticky top-0 z-10">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-zinc-700 to-zinc-800 flex items-center justify-center font-bold border border-white/5">
-                  {contacts.find(c => c.id === activeChatId)?.username[0].toUpperCase()}
+                <button 
+                  onClick={() => setActiveChatId(null)}
+                  className="md:hidden p-2 -ml-2 text-zinc-400 hover:text-white"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                </button>
+                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-600 to-blue-600 flex items-center justify-center font-bold border border-white/5 overflow-hidden shadow-lg shadow-purple-500/20">
+                  {contacts.find(c => c.id === activeChatId)?.profilePic ? (
+                    <img src={contacts.find(c => c.id === activeChatId)?.profilePic} className="w-full h-full object-cover" />
+                  ) : (
+                    contacts.find(c => c.id === activeChatId)?.username[0].toUpperCase()
+                  )}
                 </div>
                 <div>
-                  <h2 className="font-bold text-lg leading-tight">{contacts.find(c => c.id === activeChatId)?.username}</h2>
-                  <div className="flex items-center gap-1">
-                    <div className={`w-1.5 h-1.5 rounded-full ${getSocket()?.connected ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)] animate-pulse' : 'bg-red-500'}`}></div>
-                    <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">
-                      {useChatStore.getState().typingUsers[activeChatId] ? 'Typing...' : (getSocket()?.connected ? 'Secure Relay Active' : 'Connecting...')}
+                  <h2 className="font-bold text-base leading-tight text-white tracking-tight">
+                    {contacts.find(c => c.id === activeChatId)?.username}
+                  </h2>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <div className={`w-2 h-2 rounded-full ${getSocket()?.connected ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)] animate-pulse' : 'bg-red-500'}`}></div>
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                      {useChatStore.getState().typingUsers[activeChatId] ? 'Typing...' : (getSocket()?.connected ? 'Online' : 'Offline')}
                     </span>
                   </div>
                 </div>
               </div>
               <div className="flex gap-2 items-center">
+                <button
+                  onClick={() => startCall(false)}
+                  className="p-2 text-zinc-500 hover:text-green-400 hover:bg-green-500/10 rounded-xl transition-all"
+                  title="Audio Call"
+                >
+                  <Phone className="w-[18px] h-[18px]" />
+                </button>
+                <button
+                  onClick={() => startCall(true)}
+                  className="p-2 text-zinc-500 hover:text-purple-400 hover:bg-purple-500/10 rounded-xl transition-all"
+                  title="Video Call"
+                >
+                  <VideoIcon className="w-[18px] h-[18px]" />
+                </button>
+                <button
+                  onClick={() => handleAddContact(activeChatId)}
+                  className="p-2 text-zinc-500 hover:text-purple-400 hover:bg-purple-500/10 rounded-xl transition-all"
+                  title="Sync Profile Info"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.85.83 6.72 2.24L21 8"/><path d="M21 3v5h-5"/></svg>
+                </button>
                 <button
                   onClick={handleDeleteEntireChat}
                   className="p-2 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-xl transition-all"
@@ -703,14 +1165,22 @@ export default function Home() {
                     isMe={msg.senderId === currentUser.id}
                     timestamp={msg.timestamp}
                     status={msg.status}
+                    replyToId={msg.replyToId}
+                    replyToContent={msg.replyToContent}
                     onDelete={handleDeleteMessage}
+                    onReply={handleReply}
                   />
                 ))
               )}
               <div ref={messagesEndRef} />
             </div>
             
-            <InputBox onSend={sendMessage} onTyping={handleTyping} />
+            <InputBox 
+              onSend={sendMessage} 
+              onTyping={handleTyping} 
+              replyingTo={replyingTo}
+              onCancelReply={() => setReplyingTo(null)}
+            />
           </>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-zinc-900 via-black to-black">
@@ -746,6 +1216,84 @@ export default function Home() {
           </div>
         )}
       </div>
+      {isSettingsOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsSettingsOpen(false)}></div>
+          <div className="relative w-full max-w-md bg-zinc-900 border border-white/10 rounded-[2.5rem] p-8 shadow-2xl animate-in zoom-in-95 duration-200">
+            <h2 className="text-2xl font-black mb-6 text-white tracking-tight">Profile Settings</h2>
+            
+            <div className="space-y-6">
+              <div className="flex flex-col items-center gap-4 mb-8">
+                <div 
+                  className="relative group cursor-pointer"
+                  onClick={() => photoInputRef.current?.click()}
+                >
+                  <div className="w-24 h-24 rounded-3xl bg-gradient-to-br from-purple-600 to-blue-600 flex items-center justify-center text-4xl font-black shadow-xl shadow-purple-500/20 overflow-hidden border-2 border-white/5 transition-transform group-hover:scale-105">
+                    {newProfilePic ? (
+                      <img src={newProfilePic} className="w-full h-full object-cover" />
+                    ) : (
+                      currentUser?.username[0].toUpperCase()
+                    )}
+                  </div>
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-3xl backdrop-blur-[2px]">
+                    <div className="bg-white/20 p-2 rounded-full border border-white/20">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                    </div>
+                  </div>
+                </div>
+                <input 
+                  type="file" 
+                  ref={photoInputRef}
+                  className="hidden"
+                  accept="image/*"
+                  onChange={handlePhotoChange}
+                />
+                <p className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest">{currentUser?.id}</p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-zinc-500 uppercase ml-1 tracking-widest">Display Name</label>
+                <input
+                  type="text"
+                  value={newUsername}
+                  onChange={(e) => setNewUsername(e.target.value)}
+                  placeholder="Enter your name"
+                  className="w-full bg-black/50 text-white rounded-2xl px-6 py-4 border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all font-medium"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  onClick={() => setIsSettingsOpen(false)}
+                  className="flex-1 px-6 py-4 rounded-2xl bg-zinc-800 text-zinc-300 font-bold hover:bg-zinc-700 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleUpdateProfile}
+                  className="flex-1 px-6 py-4 rounded-2xl bg-white text-black font-bold hover:scale-[1.02] active:scale-[0.98] transition-all"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      <CallOverlay 
+        state={callState}
+        isVideo={isVideoCall}
+        callerInfo={callerInfo}
+        localStream={localStream}
+        remoteStream={remoteStream}
+        onAnswer={answerCall}
+        onDecline={declineCall}
+        onEnd={endCall}
+        onToggleMic={toggleMic}
+        onToggleVideo={toggleVideo}
+        isMuted={isMuted}
+        isCameraOff={isCameraOff}
+      />
     </div>
   );
 }

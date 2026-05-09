@@ -13,6 +13,9 @@ export interface Message {
   content: string; // Encrypted
   timestamp: number;
   status?: 'sent' | 'delivered' | 'read';
+  replyToId?: string;
+  replyToContent?: string;
+  type?: 'text' | 'image' | 'location' | 'video' | 'audio';
 }
 
 export interface Contact {
@@ -20,6 +23,7 @@ export interface Contact {
   username: string;
   publicKey: string;
   sharedSecret?: string;
+  profilePic?: string;
 }
 
 let dbPromise: Promise<IDBPDatabase> | null = null;

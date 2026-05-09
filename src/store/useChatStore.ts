@@ -8,6 +8,7 @@ export interface User {
   lastMessage?: string;
   lastMessageTime?: number;
   unreadCount?: number;
+  profilePic?: string;
 }
 
 interface ChatState {

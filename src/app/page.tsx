@@ -31,6 +31,11 @@ export default function Home() {
   const secretsDerivedFor = useRef<string>(''); // Stores currentUser.id + contacts version
   const activeChatIdRef = useRef<string | null>(null);
   const currentUserRef = useRef<User | null>(null);
+  const [replyingTo, setReplyingTo] = useState<{ id: string, content: string } | null>(null);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [newUsername, setNewUsername] = useState('');
+  const [newProfilePic, setNewProfilePic] = useState('');
+  const photoInputRef = useRef<HTMLInputElement>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -80,6 +85,7 @@ export default function Home() {
             let publicKey = await getKey(`${phoneId}_public`);
             let privateKey = await getKey(`${phoneId}_private`);
             let savedUsername = await getKey(`${phoneId}_username`);
+            let savedProfilePic = await getKey(`${phoneId}_profile_pic`);
 
             if (!publicKey || !privateKey) {
               console.log('[Security] No local keys found for authenticated user. Generating new pair...');
@@ -96,6 +102,7 @@ export default function Home() {
                 username: savedUsername || `User-${phoneId.slice(-4)}`,
                 phoneNumber: phoneId,
                 publicKey: publicKey,
+                profilePic: savedProfilePic
               };
               
               setCurrentUser(restoredUser);
@@ -217,7 +224,8 @@ export default function Home() {
       socket.emit('client_ready');
       socket.emit('register_identity', { 
         publicKey: initialUser.publicKey, 
-        username: initialUser.username 
+        username: initialUser.username,
+        profilePic: initialUser.profilePic
       });
     };
 
@@ -233,7 +241,12 @@ export default function Home() {
       const user = currentUserRef.current;
       if (user) {
         handleIdentityReceived(data.from, data, user);
-        socket.emit('identity_broadcast', { to: data.from, publicKey: user.publicKey, username: user.username });
+        socket.emit('identity_broadcast', { 
+          to: data.from, 
+          publicKey: user.publicKey, 
+          username: user.username,
+          profilePic: user.profilePic
+        });
       }
     });
 
@@ -304,14 +317,32 @@ export default function Home() {
 
     const decrypted = decryptMessage(content, secret);
     if (decrypted) {
-      console.log(`[Decryption] Success: "${decrypted.slice(0, 10)}..." from ${from}`);
+      let finalContent = decrypted;
+      let replyToId = undefined;
+      let replyToContent = undefined;
+      
+      try {
+        const parsed = JSON.parse(decrypted);
+        if (parsed.content !== undefined) {
+          finalContent = parsed.content;
+          replyToId = parsed.replyToId;
+          replyToContent = parsed.replyToContent;
+        }
+      } catch (e) {
+        // Fallback for legacy plain text messages
+      }
+
+      console.log(`[Decryption] Success: "${finalContent.slice(0, 10)}..." from ${from}`);
       const msg: Message = {
         id: id || uuidv4(),
         senderId: from,
         receiverId: user.id,
-        content: decrypted,
+        chatId: from,
+        content: finalContent,
         timestamp: timestamp || Date.now(),
-        status: normalize(activeChatIdRef.current || '') === normalize(from) ? 'read' : 'delivered'
+        status: normalize(activeChatIdRef.current || '') === normalize(from) ? 'read' : 'delivered',
+        replyToId,
+        replyToContent
       };
 
       // Atomic Save & Update
@@ -355,11 +386,17 @@ export default function Home() {
       console.warn(`[Identity] Received empty identity payload from ${from}`);
       return;
     }
-    const { publicKey, username } = payload;
+    const { publicKey, username, profilePic } = payload;
     const normalizedFrom = normalize(from);
     const secret = deriveSharedSecret(localUser.publicKey, (window as any).myPrivateKey, publicKey);
     sharedSecrets.current[normalizedFrom] = secret;
-    const newContact = { id: from, username: username || 'Anonymous', publicKey, sharedSecret: secret };
+    const newContact = { 
+      id: from, 
+      username: username || 'Anonymous', 
+      publicKey, 
+      sharedSecret: secret,
+      profilePic: profilePic
+    };
     addContact(newContact);
     saveContact(newContact).then(() => {
       console.log('Contact persisted for normalized ID:', normalizedFrom);
@@ -447,7 +484,40 @@ export default function Home() {
     }
   };
 
-  const sendMessage = async (content: string) => {
+  const handleReply = (id: string, content: string) => {
+    setReplyingTo({ id, content });
+  };
+
+  const handleUpdateProfile = async () => {
+    if (!currentUser || !newUsername.trim()) return;
+    const updatedUser = { ...currentUser, username: newUsername.trim(), profilePic: newProfilePic };
+    setCurrentUser(updatedUser);
+    await saveKey(`${currentUser.id}_username`, newUsername.trim());
+    if (newProfilePic) await saveKey(`${currentUser.id}_profile_pic`, newProfilePic);
+    
+    // Broadcast change to relay server
+    const socket = getSocket();
+    if (socket) {
+      socket.emit('register_identity', { 
+        publicKey: currentUser.publicKey, 
+        username: newUsername.trim(),
+        profilePic: newProfilePic
+      });
+
+      // Also notify active chat partner immediately
+      if (activeChatId) {
+        socket.emit('identity_broadcast', { 
+          to: activeChatId, 
+          publicKey: currentUser.publicKey, 
+          username: newUsername.trim(),
+          profilePic: newProfilePic
+        });
+      }
+    }
+    setIsSettingsOpen(false);
+  };
+
+  const sendMessage = async (content: string, replyTo?: { id: string, content: string }) => {
     if (!activeChatId || !currentUser) return;
     
     const normalizedChatId = normalize(activeChatId);
@@ -466,7 +536,7 @@ export default function Home() {
           if (identity && currentUser) {
             handleIdentityReceived(activeChatId, identity, currentUser);
             // Wait a tiny bit for state to settle then retry
-            setTimeout(() => sendMessage(content), 50);
+            setTimeout(() => sendMessage(content, replyTo), 50);
           } else {
             alert(`Unable to find user ${activeChatId} on the network. Make sure they are registered.`);
           }
@@ -477,17 +547,25 @@ export default function Home() {
 
     if (!secret) return;
 
-    const encrypted = encryptMessage(content, secret);
+    const msgId = uuidv4();
+    const payload = JSON.stringify({ 
+      content,
+      replyToId: replyTo?.id,
+      replyToContent: replyTo?.content 
+    });
+    const encrypted = encryptMessage(payload, secret);
     
     // 1. Create message object
     const msg: Message = {
-      id: uuidv4(),
+      id: msgId,
       senderId: currentUser.id,
       receiverId: activeChatId,
       chatId: activeChatId, // THE OTHER PERSON
       content: content,
       timestamp: Date.now(),
       status: 'sent',
+      replyToId: replyTo?.id,
+      replyToContent: replyTo?.content
     };
     
     // 2. Save and display locally immediately
@@ -668,24 +746,45 @@ export default function Home() {
     );
   }
 
+  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setNewProfilePic(event.target?.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   return (
     <div className="h-screen bg-black flex text-white overflow-hidden">
-      <ChatList />
+      <ChatList onOpenSettings={() => {
+        setNewUsername(currentUser?.username || '');
+        setNewProfilePic(currentUser?.profilePic || '');
+        setIsSettingsOpen(true);
+      }} />
       
       <div className="flex-1 flex flex-col relative">
         {activeChatId ? (
           <>
             <div className="p-4 border-b border-zinc-800/50 flex justify-between items-center bg-zinc-900/30 backdrop-blur-md sticky top-0 z-10">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-zinc-700 to-zinc-800 flex items-center justify-center font-bold border border-white/5">
-                  {contacts.find(c => c.id === activeChatId)?.username[0].toUpperCase()}
+                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-600 to-blue-600 flex items-center justify-center font-bold border border-white/5 overflow-hidden shadow-lg shadow-purple-500/20">
+                  {contacts.find(c => c.id === activeChatId)?.profilePic ? (
+                    <img src={contacts.find(c => c.id === activeChatId)?.profilePic} className="w-full h-full object-cover" />
+                  ) : (
+                    contacts.find(c => c.id === activeChatId)?.username[0].toUpperCase()
+                  )}
                 </div>
                 <div>
-                  <h2 className="font-bold text-lg leading-tight">{contacts.find(c => c.id === activeChatId)?.username}</h2>
-                  <div className="flex items-center gap-1">
-                    <div className={`w-1.5 h-1.5 rounded-full ${getSocket()?.connected ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)] animate-pulse' : 'bg-red-500'}`}></div>
-                    <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">
-                      {useChatStore.getState().typingUsers[activeChatId] ? 'Typing...' : (getSocket()?.connected ? 'Secure Relay Active' : 'Connecting...')}
+                  <h2 className="font-bold text-base leading-tight text-white tracking-tight">
+                    {contacts.find(c => c.id === activeChatId)?.username}
+                  </h2>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <div className={`w-2 h-2 rounded-full ${getSocket()?.connected ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)] animate-pulse' : 'bg-red-500'}`}></div>
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                      {useChatStore.getState().typingUsers[activeChatId] ? 'Typing...' : (getSocket()?.connected ? 'Online' : 'Offline')}
                     </span>
                   </div>
                 </div>
@@ -731,14 +830,22 @@ export default function Home() {
                     isMe={msg.senderId === currentUser.id}
                     timestamp={msg.timestamp}
                     status={msg.status}
+                    replyToId={msg.replyToId}
+                    replyToContent={msg.replyToContent}
                     onDelete={handleDeleteMessage}
+                    onReply={handleReply}
                   />
                 ))
               )}
               <div ref={messagesEndRef} />
             </div>
             
-            <InputBox onSend={sendMessage} onTyping={handleTyping} />
+            <InputBox 
+              onSend={sendMessage} 
+              onTyping={handleTyping} 
+              replyingTo={replyingTo}
+              onCancelReply={() => setReplyingTo(null)}
+            />
           </>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-zinc-900 via-black to-black">
@@ -774,6 +881,70 @@ export default function Home() {
           </div>
         )}
       </div>
+      {isSettingsOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsSettingsOpen(false)}></div>
+          <div className="relative w-full max-w-md bg-zinc-900 border border-white/10 rounded-[2.5rem] p-8 shadow-2xl animate-in zoom-in-95 duration-200">
+            <h2 className="text-2xl font-black mb-6 text-white tracking-tight">Profile Settings</h2>
+            
+            <div className="space-y-6">
+              <div className="flex flex-col items-center gap-4 mb-8">
+                <div 
+                  className="relative group cursor-pointer"
+                  onClick={() => photoInputRef.current?.click()}
+                >
+                  <div className="w-24 h-24 rounded-3xl bg-gradient-to-br from-purple-600 to-blue-600 flex items-center justify-center text-4xl font-black shadow-xl shadow-purple-500/20 overflow-hidden border-2 border-white/5 transition-transform group-hover:scale-105">
+                    {newProfilePic ? (
+                      <img src={newProfilePic} className="w-full h-full object-cover" />
+                    ) : (
+                      currentUser?.username[0].toUpperCase()
+                    )}
+                  </div>
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-3xl backdrop-blur-[2px]">
+                    <div className="bg-white/20 p-2 rounded-full border border-white/20">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                    </div>
+                  </div>
+                </div>
+                <input 
+                  type="file" 
+                  ref={photoInputRef}
+                  className="hidden"
+                  accept="image/*"
+                  onChange={handlePhotoChange}
+                />
+                <p className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest">{currentUser?.id}</p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-zinc-500 uppercase ml-1 tracking-widest">Display Name</label>
+                <input
+                  type="text"
+                  value={newUsername}
+                  onChange={(e) => setNewUsername(e.target.value)}
+                  placeholder="Enter your name"
+                  className="w-full bg-black/50 text-white rounded-2xl px-6 py-4 border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all font-medium"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  onClick={() => setIsSettingsOpen(false)}
+                  className="flex-1 px-6 py-4 rounded-2xl bg-zinc-800 text-zinc-300 font-bold hover:bg-zinc-700 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleUpdateProfile}
+                  className="flex-1 px-6 py-4 rounded-2xl bg-white text-black font-bold hover:scale-[1.02] active:scale-[0.98] transition-all"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

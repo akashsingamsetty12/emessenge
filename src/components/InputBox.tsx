@@ -1,22 +1,32 @@
 'use client';
 
-import { useState, useRef } from 'react';
-import { Paperclip, Send, MapPin, Smile } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { Paperclip, Send, MapPin, Smile, X, Reply } from 'lucide-react';
 
 interface InputBoxProps {
-  onSend: (content: string) => void;
+  onSend: (content: string, replyTo?: { id: string, content: string }) => void;
   onTyping: (isTyping: boolean) => void;
+  replyingTo: { id: string, content: string } | null;
+  onCancelReply: () => void;
 }
 
-export function InputBox({ onSend, onTyping }: InputBoxProps) {
+export function InputBox({ onSend, onTyping, replyingTo, onCancelReply }: InputBoxProps) {
   const [text, setText] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (replyingTo) {
+      inputRef.current?.focus();
+    }
+  }, [replyingTo]);
 
   const handleSend = () => {
     if (text.trim()) {
-      onSend(text);
+      onSend(text, replyingTo || undefined);
       setText('');
       onTyping(false);
+      onCancelReply();
     }
   };
 
@@ -49,8 +59,30 @@ export function InputBox({ onSend, onTyping }: InputBoxProps) {
   };
 
   return (
-    <div className="p-4 bg-zinc-900/30 backdrop-blur-xl border-t border-white/5 sticky bottom-0">
-      <div className="flex items-center gap-2 max-w-4xl mx-auto">
+    <div className="bg-zinc-900/30 backdrop-blur-xl border-t border-white/5 sticky bottom-0 z-20">
+      {replyingTo && (
+        <div className="max-w-4xl mx-auto px-4 py-2 border-b border-white/5 bg-purple-500/5 animate-in slide-in-from-bottom-2 duration-300 flex items-center justify-between">
+          <div className="flex items-center gap-3 overflow-hidden">
+            <div className="text-purple-400">
+              <Reply size={16} />
+            </div>
+            <div className="border-l-2 border-purple-500 pl-3 overflow-hidden">
+              <p className="text-[10px] font-bold text-purple-400 uppercase tracking-widest">Replying to</p>
+              <p className="text-xs text-zinc-400 truncate italic">
+                {replyingTo.content.startsWith('data:image') ? '📷 Photo' : (replyingTo.content.startsWith('LOC:') ? '📍 Location' : replyingTo.content)}
+              </p>
+            </div>
+          </div>
+          <button 
+            onClick={onCancelReply}
+            className="p-1 hover:bg-white/10 rounded-full text-zinc-500 transition-colors"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+      
+      <div className="p-4 flex items-center gap-2 max-w-4xl mx-auto">
         <button 
           onClick={() => fileInputRef.current?.click()}
           className="p-3 text-zinc-400 hover:text-white hover:bg-white/5 rounded-2xl transition-all"
@@ -75,6 +107,7 @@ export function InputBox({ onSend, onTyping }: InputBoxProps) {
           </button>
           <input
             type="text"
+            ref={inputRef}
             placeholder="Message..."
             value={text}
             onChange={(e) => {

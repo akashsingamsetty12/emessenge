@@ -5,16 +5,25 @@ let socket: Socket | null = null;
 export const initSocket = (userId: string) => {
   if (socket) return socket;
 
-  // 1. Check if user manually set an IP
+  // 1. Priority: Manually saved IP from Server Settings
   const savedIp = typeof window !== 'undefined' ? localStorage.getItem('server_ip') : null;
   
-  // 2. Otherwise auto-resolve based on current URL
+  // 2. Secondary: Environment variable (useful for production/specific builds)
+  const envUrl = process.env.NEXT_PUBLIC_SOCKET_URL;
+  
+  // 3. Fallback: Current window hostname (preserving laptop-to-laptop)
   const host = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
   
-  const finalHost = savedIp || host;
-  const url = `http://${finalHost}:3001`;
+  let url = '';
+  if (savedIp) {
+    url = savedIp.startsWith('http') ? savedIp : `http://${savedIp}:3001`;
+  } else if (envUrl) {
+    url = envUrl;
+  } else {
+    url = `http://${host}:3001`;
+  }
   
-  console.log(`[Socket] Connecting to ${url}...`);
+  console.log(`[Socket] Connecting to ${url} (User: ${userId})`);
   
   socket = io(url, {
     query: { userId },

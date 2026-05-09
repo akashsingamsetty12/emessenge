@@ -1,5 +1,6 @@
 import { initializeApp, getApps } from "firebase/app";
 import { getAuth, RecaptchaVerifier, signInWithPhoneNumber, ConfirmationResult } from "firebase/auth";
+import { getMessaging } from "firebase/messaging";
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -15,6 +16,7 @@ const app = (getApps().length === 0 && firebaseConfig.apiKey)
   : (getApps()[0] || null);
 
 export const auth = app ? getAuth(app) : null as any;
+export const messaging = (app && typeof window !== 'undefined') ? getMessaging(app) : null;
 
 export { RecaptchaVerifier, signInWithPhoneNumber };
 export type { ConfirmationResult };

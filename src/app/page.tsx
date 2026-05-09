@@ -14,9 +14,15 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { UserX, Phone, Video as VideoIcon } from 'lucide-react';
 import { PeerConnection } from '@/lib/peer';
 import { CallOverlay } from '@/components/CallOverlay';
+import { initNotifications } from '@/lib/notifications';
 
 export default function Home() {
-  const normalize = (id: string) => id ? id.replace(/\D/g, '') : '';
+  const normalize = (id: string) => {
+    if (!id) return '';
+    let cleaned = id.replace(/\D/g, '');
+    if (cleaned.length === 10) cleaned = '91' + cleaned;
+    return cleaned;
+  };
   const { currentUser, setCurrentUser, activeChatId, setActiveChatId, contacts, addContact, setContacts, markAsRead, logout } = useChatStore();
   const [messages, setMessages] = useState<Message[]>([]);
   const [usernameInput, setUsernameInput] = useState('');
@@ -130,6 +136,7 @@ export default function Home() {
                 (window as any).myPrivateKey = privateKey;
               }
               
+              initNotifications(); // Register for push notifications
               const socket = initSocket(restoredUser.id);
               setupSocketListeners(socket, restoredUser);
             }

@@ -23,8 +23,23 @@ export class PeerConnection {
       config: {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' },
+          { urls: 'stun:stun3.l.google.com:19302' },
+          { urls: 'stun:stun4.l.google.com:19302' },
           { urls: 'stun:global.stun.twilio.com:3478' },
+          // Add your TURN servers here for 100% reliability on 4G/5G
+          {
+            urls: [
+              'turn:global.metered.ca:80',
+              'turn:global.metered.ca:443',
+              'turn:global.metered.ca:443?transport=tcp'
+            ],
+            username: '51412f469359e1c54d55847c',
+            credential: 'cEg67J6jpgvUA+pH'
+          }
         ],
+        iceCandidatePoolSize: 10,
       },
     });
 

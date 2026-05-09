@@ -239,14 +239,8 @@ export default function Home() {
 
     socket.on('identity_broadcast', (data: any) => {
       const user = currentUserRef.current;
-      if (user) {
+      if (user && data.from !== user.id) {
         handleIdentityReceived(data.from, data, user);
-        socket.emit('identity_broadcast', { 
-          to: data.from, 
-          publicKey: user.publicKey, 
-          username: user.username,
-          profilePic: user.profilePic
-        });
       }
     });
 
@@ -292,6 +286,12 @@ export default function Home() {
         setActiveChatId(null);
         setMessages([]);
       }
+      return;
+    }
+
+    if (type === 'identity_broadcast') {
+      const user = currentUserRef.current;
+      if (user) handleIdentityReceived(from, content, user);
       return;
     }
 
@@ -404,11 +404,18 @@ export default function Home() {
       return;
     }
     const { publicKey, username, profilePic } = payload;
+    console.log(`[Identity] Updating profile for ${from}. Photo: ${profilePic ? 'Present' : 'Missing'}`);
     const normalizedFrom = normalize(from);
     const secret = deriveSharedSecret(localUser.publicKey, (window as any).myPrivateKey, publicKey);
     sharedSecrets.current[normalizedFrom] = secret;
     
     const existing = useChatStore.getState().contacts.find(c => normalize(c.id) === normalizedFrom);
+    
+    // Skip if nothing changed to prevent loops
+    if (existing && existing.username === username && existing.profilePic === profilePic && existing.publicKey === publicKey) {
+      return;
+    }
+
     const newContact = { 
       ...existing,
       id: from, 
@@ -419,17 +426,31 @@ export default function Home() {
     };
     addContact(newContact);
     saveContact(newContact).then(() => {
-      console.log('Contact persisted for normalized ID:', normalizedFrom);
+      // Only log if it's a meaningful update
+      if (!existing || existing.profilePic !== profilePic) {
+        console.log('[Sync] Profile persisted for:', from);
+      }
     });
     sharedSecrets.current[normalizedFrom] = secret;
   };
 
 
-  // Separated connect logic
+  // Refresh all contacts' info on startup
   useEffect(() => {
-    // When peers connect, they might need to exchange keys
-    // This is handled in onData 'key_exchange'
-  }, []);
+    if (currentUser && contacts.length > 0) {
+      const socket = getSocket();
+      if (socket && socket.connected) {
+        console.log('[Sync] Refreshing contact directory...');
+        contacts.forEach(contact => {
+          socket.emit('get_identity', contact.id, (identity: any) => {
+            if (identity) {
+              handleIdentityReceived(contact.id, identity, currentUser);
+            }
+          });
+        });
+      }
+    }
+  }, [currentUser?.id, contacts.length]);
 
   const handleAddContact = (id?: string) => {
     const targetId = typeof id === 'string' ? id : prompt('Enter phone number (e.g., +91888...):');
@@ -838,6 +859,13 @@ export default function Home() {
                 </div>
               </div>
               <div className="flex gap-2 items-center">
+                <button
+                  onClick={() => handleAddContact(activeChatId)}
+                  className="p-2 text-zinc-500 hover:text-purple-400 hover:bg-purple-500/10 rounded-xl transition-all"
+                  title="Sync Profile Info"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.85.83 6.72 2.24L21 8"/><path d="M21 3v5h-5"/></svg>
+                </button>
                 <button
                   onClick={handleDeleteEntireChat}
                   className="p-2 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-xl transition-all"

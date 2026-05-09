@@ -49,16 +49,31 @@ export const ChatList = ({ onOpenSettings, onAddContact }: ChatListProps) => {
       <div className="p-6 pb-2">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-2xl font-black text-white tracking-tight">Messages</h2>
-          <div className="flex gap-2">
+          <div className="flex gap-1">
+            <button 
+              onClick={onAddContact}
+              className="p-2 hover:bg-purple-500/10 rounded-xl transition-all text-purple-400"
+              title="New Message"
+            >
+              <MessageSquarePlus size={20} />
+            </button>
+            <button 
+              onClick={() => {
+                // This triggers the useEffect in page.tsx that loops through contacts
+                // We'll also just reload the page as a quick sync for now
+                window.location.reload();
+              }}
+              className="p-2 hover:bg-zinc-800 rounded-xl transition-all text-zinc-400 hover:text-white"
+              title="Refresh List"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.85.83 6.72 2.24L21 8"/><path d="M21 3v5h-5"/></svg>
+            </button>
             <button 
               onClick={onOpenSettings}
-              className="p-2 hover:bg-zinc-800 rounded-xl transition-colors text-zinc-400 hover:text-white"
+              className="p-2 hover:bg-zinc-800 rounded-xl transition-all text-zinc-400 hover:text-white"
               title="Settings"
             >
               <Settings size={20} />
-            </button>
-            <button className="p-2 hover:bg-zinc-800 rounded-xl transition-colors text-zinc-400">
-              <MoreVertical size={20} />
             </button>
           </div>
         </div>
@@ -139,8 +154,11 @@ export const ChatList = ({ onOpenSettings, onAddContact }: ChatListProps) => {
 
       {currentUser && (
         <div className="p-4 border-t border-white/5 bg-zinc-950/50 backdrop-blur-xl">
-          <div className="flex items-center gap-3 p-2 rounded-2xl bg-zinc-900/30 border border-white/5">
-            <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center font-bold text-xs border border-white/5 overflow-hidden">
+          <div 
+            onClick={onOpenSettings}
+            className="flex items-center gap-3 p-2 rounded-2xl bg-zinc-900/30 border border-white/5 cursor-pointer hover:bg-zinc-800 transition-all group/profile"
+          >
+            <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center font-bold text-xs border border-white/5 overflow-hidden group-hover/profile:scale-105 transition-transform">
               {currentUser.profilePic ? (
                 <img src={currentUser.profilePic} className="w-full h-full object-cover" />
               ) : (
@@ -152,7 +170,10 @@ export const ChatList = ({ onOpenSettings, onAddContact }: ChatListProps) => {
               <p className="text-[10px] text-zinc-500 font-mono truncate">{currentUser.id}</p>
             </div>
             <button 
-              onClick={handleLogout}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleLogout();
+              }}
               className="p-2 text-zinc-500 hover:text-red-400 transition-colors"
               title="Logout"
             >
@@ -161,14 +182,6 @@ export const ChatList = ({ onOpenSettings, onAddContact }: ChatListProps) => {
           </div>
         </div>
       )}
-      {/* Mobile Add Chat FAB */}
-      <button 
-        onClick={onAddContact}
-        className="absolute bottom-24 right-6 w-14 h-14 bg-purple-600 rounded-full flex items-center justify-center shadow-2xl shadow-purple-500/40 hover:scale-110 active:scale-95 transition-all z-50 text-white"
-        title="New Message"
-      >
-        <MessageSquarePlus size={24} />
-      </button>
     </div>
   );
 };

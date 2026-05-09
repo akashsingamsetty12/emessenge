@@ -3,6 +3,7 @@ const http = require("http");
 
 const httpServer = http.createServer();
 const io = new Server(httpServer, {
+  maxHttpBufferSize: 1e8, // 100MB for media sharing
   cors: {
     origin: "*",
     methods: ["GET", "POST"]

@@ -16,6 +16,8 @@
     "@capacitor/android": "^8.3.2",
     "@capacitor/cli": "^8.3.2",
     "@capacitor/core": "^8.3.2",
+    "@capacitor/local-notifications": "^8.1.0",
+    "@capacitor/push-notifications": "^8.0.4",
     "buffer": "^6.0.3",
     "firebase": "^12.13.0",
     "idb": "^8.0.3",

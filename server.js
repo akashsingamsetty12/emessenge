@@ -14,7 +14,12 @@ const users = new Map(); // normalizedId -> Set(socket.id)
 const directory = new Map(); // normalizedId -> { publicKey, username, profilePic, rawId }
 const offlineMessages = new Map(); // normalizedId -> [{ from, content, timestamp }]
 
-const normalize = (id) => id ? id.replace(/\D/g, '') : '';
+const normalize = (id) => {
+  if (!id) return '';
+  let cleaned = id.replace(/\D/g, '');
+  if (cleaned.length === 10) cleaned = '91' + cleaned;
+  return cleaned;
+};
 
 io.on("connection", (socket) => {
   const rawUserId = socket.handshake.query.userId;

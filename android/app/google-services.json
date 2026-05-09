@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "425940594867",
+    "project_id": "campuscomeback-66a3a4f0",
+    "storage_bucket": "campuscomeback-66a3a4f0.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:425940594867:android:47824a599eb3279541c0c6",
+        "android_client_info": {
+          "package_name": "com.emessage.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBtVkhnTrSZ4h-f5TqJ6ajrQERgUm8-sXA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

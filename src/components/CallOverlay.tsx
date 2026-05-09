@@ -38,12 +38,15 @@ export const CallOverlay = ({
   useEffect(() => {
     if (localVideoRef.current && localStream) {
       localVideoRef.current.srcObject = localStream;
+      localVideoRef.current.play().catch(e => console.warn('Local play failed:', e));
     }
   }, [localStream, state]);
 
   useEffect(() => {
     if (remoteVideoRef.current && remoteStream) {
+      console.log('[Call] Attaching remote stream to video element...');
       remoteVideoRef.current.srcObject = remoteStream;
+      remoteVideoRef.current.play().catch(e => console.warn('Remote play failed:', e));
     }
   }, [remoteStream, state]);
 
@@ -151,6 +154,28 @@ export const CallOverlay = ({
       </div>
 
       <style jsx>{`
+        .video-grid {
+          position: absolute;
+          inset: 0;
+          background: #000;
+        }
+        .remote-video {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+        .local-video-pip {
+          position: absolute;
+          bottom: 2rem;
+          right: 2rem;
+          width: 120px;
+          height: 180px;
+          border-radius: 1.5rem;
+          overflow: hidden;
+          box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+          border: 2px solid rgba(255,255,255,0.1);
+          z-index: 10;
+        }
         .mirror {
           transform: scaleX(-1);
         }

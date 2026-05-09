@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev --webpack -H 0.0.0.0",
     "build": "next build --webpack",
-    "start": "next start",
+    "start": "node server.js",
+    "web": "next start",
     "lint": "eslint",
     "signaling": "node server.js",
     "mobile:build": "npm run build && npx cap sync",

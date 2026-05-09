@@ -124,6 +124,15 @@ io.on("connection", (socket) => {
     callback(identity);
   });
 
+  socket.on("get_directory", (callback) => {
+    const allUsers = Array.from(directory.values()).map(u => ({
+      id: u.rawId,
+      username: u.username,
+      profilePic: u.profilePic
+    }));
+    callback(allUsers);
+  });
+
   socket.on("disconnect", () => {
     if (userId && users.has(userId)) {
       users.get(userId).delete(socket.id);

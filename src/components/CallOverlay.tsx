@@ -1,14 +1,15 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
-import { Phone, PhoneOff, Video, VideoOff, Mic, MicOff, Maximize2, Monitor, MonitorOff, Camera } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Phone, PhoneOff, Video, VideoOff, Mic, MicOff, Maximize2, Monitor, MonitorOff, Camera, Circle, StopCircle, Download, Tv } from 'lucide-react';
+import { Theater } from './Theater';
 
 interface CallOverlayProps {
   state: 'idle' | 'calling' | 'receiving' | 'active';
   isVideo: boolean;
   callerInfo: { username: string, profilePic?: string };
   localStream: MediaStream | null;
-  remoteStream: MediaStream | null;
+  remoteStreams: Map<string, MediaStream>;
   onAnswer: () => void;
   onDecline: () => void;
   onEnd: () => void;
@@ -22,6 +23,12 @@ interface CallOverlayProps {
   isMuted: boolean;
   isCameraOff: boolean;
   isScreenSharing: boolean;
+  isTheaterOpen: boolean;
+  isBackgroundBlurred: boolean;
+  onToggleTheater: () => void;
+  onToggleBlur: () => void;
+  onTheaterSync: (data: any) => void;
+  theaterSyncData: any;
 }
 
 export const CallOverlay = ({
@@ -29,7 +36,7 @@ export const CallOverlay = ({
   isVideo,
   callerInfo,
   localStream,
-  remoteStream,
+  remoteStreams,
   onAnswer,
   onDecline,
   onEnd,
@@ -42,25 +49,69 @@ export const CallOverlay = ({
   ping,
   isMuted,
   isCameraOff,
-  isScreenSharing
+  isScreenSharing,
+  isTheaterOpen,
+  isBackgroundBlurred,
+  onToggleTheater,
+  onToggleBlur,
+  onTheaterSync,
+  theaterSyncData
 }: CallOverlayProps) => {
+  const [isRecording, setIsRecording] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+
+  const startRecording = () => {
+    if (!remoteStream && !localStream) return;
+    
+    // Combine streams if possible, or just record local/remote
+    // For simplicity, we record the remote stream as it's the primary content
+    const streamToRecord = remoteStream || localStream;
+    if (!streamToRecord) return;
+
+    recordedChunksRef.current = [];
+    const options = { mimeType: 'video/webm;codecs=vp9,opus' };
+    
+    try {
+      const recorder = new MediaRecorder(streamToRecord, options);
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          recordedChunksRef.current.push(event.data);
+        }
+      };
+      recorder.onstop = () => {
+        const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = `call-record-${Date.now()}.webm`;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          document.body.removeChild(a);
+          window.URL.revokeObjectURL(url);
+        }, 100);
+      };
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setIsRecording(true);
+    } catch (e) {
+      console.error('Recording failed:', e);
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+    }
+  };
+
   const localVideoCallback = (node: HTMLVideoElement | null) => {
     if (node && localStream) {
       node.srcObject = localStream;
       node.play().catch(e => console.warn('Local play failed:', e));
-    }
-  };
-
-  const remoteVideoCallback = (node: HTMLVideoElement | null) => {
-    if (node && remoteStream) {
-      console.log('[Call] Attaching remote stream to video element. Tracks:', remoteStream.getTracks().length);
-      node.srcObject = remoteStream;
-      node.onloadedmetadata = () => {
-        console.log('[Call] Remote video metadata loaded, playing...');
-        node.play().catch(e => console.warn('Remote play failed:', e));
-      };
-    } else if (node) {
-      console.log('[Call] Remote video element rendered but remoteStream is missing.');
     }
   };
 
@@ -92,23 +143,28 @@ export const CallOverlay = ({
 
       <div className="relative w-full max-w-4xl h-full max-h-[800px] flex flex-col items-center justify-between">
         
-        {/* Header / Remote View */}
+        {/* Header / Remote View Grid / Theater */}
         <div className="flex-1 w-full relative rounded-[3rem] overflow-hidden bg-zinc-900/50 border border-white/5 shadow-2xl">
-          {state === 'active' && isVideo ? (
-            <div className="video-grid">
-              <video 
-                ref={remoteVideoCallback} 
-                autoPlay 
-                playsInline 
-                className="remote-video"
-              />
-              <div className="local-video-pip">
+          {isTheaterOpen ? (
+            <Theater onSync={onTheaterSync} syncData={theaterSyncData} />
+          ) : state === 'active' && isVideo ? (
+            <div className={`video-grid grid gap-2 p-2 ${remoteStreams.size > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+              {Array.from(remoteStreams.entries()).map(([peerId, stream]) => (
+                <div key={peerId} className="relative w-full h-full rounded-2xl overflow-hidden bg-black">
+                  <RemoteVideo stream={stream} />
+                  <div className="absolute bottom-4 left-4 px-3 py-1 bg-black/40 backdrop-blur-md rounded-lg border border-white/10">
+                    <span className="text-[10px] text-zinc-300 font-bold uppercase tracking-wider">{peerId.slice(-4)}</span>
+                  </div>
+                </div>
+              ))}
+              
+              <div className="local-video-pip shadow-2xl">
                 <video 
                   ref={localVideoCallback} 
                   autoPlay 
                   playsInline 
                   muted 
-                  className="w-full h-full object-cover mirror"
+                  className={`w-full h-full object-contain mirror bg-zinc-900 ${isBackgroundBlurred ? 'blur-md scale-110' : ''}`}
                 />
                 {isCameraOff && (
                    <div className="absolute inset-0 bg-zinc-800 flex items-center justify-center">
@@ -200,6 +256,30 @@ export const CallOverlay = ({
                   >
                     <Camera className="w-5 h-5 md:w-6 md:h-6" />
                   </button>
+
+                  <button 
+                    onClick={onToggleTheater}
+                    className={`p-4 md:p-5 rounded-2xl transition-all hover:scale-110 active:scale-95 border ${isTheaterOpen ? 'bg-blue-500/20 text-blue-500 border-blue-500/20' : 'bg-white/5 text-zinc-400 hover:text-white border-white/5'}`}
+                    title="Watch Together"
+                  >
+                    <Tv className="w-5 h-5 md:w-6 md:h-6" />
+                  </button>
+
+                  <button 
+                    onClick={onToggleBlur}
+                    className={`p-4 md:p-5 rounded-2xl transition-all hover:scale-110 active:scale-95 border ${isBackgroundBlurred ? 'bg-yellow-500/20 text-yellow-500 border-yellow-500/20' : 'bg-white/5 text-zinc-400 hover:text-white border-white/5'}`}
+                    title="Blur Background"
+                  >
+                    <Maximize2 className="w-5 h-5 md:w-6 md:h-6" />
+                  </button>
+
+                  <button 
+                    onClick={isRecording ? stopRecording : startRecording}
+                    className={`p-4 md:p-5 rounded-2xl transition-all hover:scale-110 active:scale-95 border ${isRecording ? 'bg-red-500/20 text-red-500 border-red-500/20' : 'bg-white/5 text-zinc-400 hover:text-white border-white/5'}`}
+                    title={isRecording ? "Stop Recording" : "Start Recording"}
+                  >
+                    {isRecording ? <StopCircle className="w-5 h-5 md:w-6 md:h-6 animate-pulse" /> : <Circle className="w-5 h-5 md:w-6 md:h-6" />}
+                  </button>
                 </>
               )}
 
@@ -223,7 +303,8 @@ export const CallOverlay = ({
         .remote-video {
           width: 100%;
           height: 100%;
-          object-fit: cover;
+          object-fit: contain;
+          background: #000;
         }
         .local-video-pip {
           position: absolute;
@@ -266,5 +347,24 @@ export const CallOverlay = ({
         }
       `}</style>
     </div>
+  );
+};
+
+const RemoteVideo = ({ stream }: { stream: MediaStream }) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.srcObject = stream;
+    }
+  }, [stream]);
+
+  return (
+    <video
+      ref={videoRef}
+      autoPlay
+      playsInline
+      className="remote-video"
+    />
   );
 };

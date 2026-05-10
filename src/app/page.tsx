@@ -54,15 +54,18 @@ export default function Home() {
   const [callerInfo, setCallerInfo] = useState({ username: '', profilePic: '' });
   const [callerId, setCallerId] = useState('');
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map());
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
   const [callReactions, setCallReactions] = useState<Array<{ id: string, emoji: string }>>([]);
   const [callPing, setCallPing] = useState(0);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [isTheaterOpen, setIsTheaterOpen] = useState(false);
+  const [isBackgroundBlurred, setIsBackgroundBlurred] = useState(false);
+  const [theaterSyncData, setTheaterSyncData] = useState<any>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
-  const peerRef = useRef<PeerConnection | null>(null);
-  const signalBufferRef = useRef<any[]>([]);
+  const peersRef = useRef<Map<string, PeerConnection>>(new Map());
+  const signalBufferRef = useRef<Map<string, any[]>>(new Map());
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -314,20 +317,22 @@ export default function Home() {
     });
 
     socket.on('call_reconnect', () => {
-      if (callState === 'active' && peerRef.current) {
+      if (callState === 'active' && peersRef.current.size > 0) {
         console.log('[Call] Peer requested reconnect. Restarting signaling...');
-        // In a real SFU this would be handled by the server, but for P2P we can re-initiate
         if (callerId) startCall(isVideoCall);
       }
     });
 
     socket.on('signal', ({ from, signal }: { from: string, signal: any }) => {
       console.log(`[Call] Received signal from ${from}`);
-      if (peerRef.current) {
-        peerRef.current.signal(signal);
+      const peer = peersRef.current.get(from);
+      if (peer) {
+        peer.signal(signal);
       } else {
         console.log('[Call] Buffering signal because peer is not ready');
-        signalBufferRef.current.push(signal);
+        const buffer = signalBufferRef.current.get(from) || [];
+        buffer.push(signal);
+        signalBufferRef.current.set(from, buffer);
       }
     });
 
@@ -337,6 +342,11 @@ export default function Home() {
       setTimeout(() => {
         setCallReactions(prev => prev.filter(r => r.id !== id));
       }, 3000);
+    });
+
+    socket.on('theater_sync', (data: any) => {
+      setTheaterSyncData(data);
+      if (data.type === 'load') setIsTheaterOpen(true);
     });
   };
 
@@ -812,7 +822,11 @@ export default function Home() {
           width: { ideal: 640 },
           height: { ideal: 480 }
         } : false, 
-        audio: true 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
       });
       setLocalStream(stream);
       setIsVideoCall(isVideo);
@@ -827,16 +841,22 @@ export default function Home() {
         onSignal: (data) => {
           getSocket()?.emit('signal', { to: activeChatId, signal: data });
         },
-        onConnect: () => console.log('[Call] WebRTC Connected'),
+        onConnect: () => console.log(`[Call] WebRTC Connected with ${activeChatId}`),
         onData: (data) => console.log('[Call] Data:', data),
         onError: (err) => {
           console.error('[Call] Error:', err);
           cleanupCall();
         },
-        onStream: (remote) => setRemoteStream(remote)
+        onStream: (remote) => {
+          setRemoteStreams(prev => {
+            const next = new Map(prev);
+            next.set(activeChatId, remote);
+            return next;
+          });
+        }
       });
 
-      peerRef.current = peer;
+      peersRef.current.set(activeChatId, peer);
 
       getSocket()?.emit('message_relay', {
         to: activeChatId,
@@ -874,22 +894,29 @@ export default function Home() {
         onSignal: (data) => {
           getSocket()?.emit('signal', { to: callerId, signal: data });
         },
-        onConnect: () => console.log('[Call] WebRTC Connected'),
+        onConnect: () => console.log(`[Call] WebRTC Connected with ${callerId}`),
         onData: (data) => console.log('[Call] Data:', data),
         onError: (err) => {
           console.error('[Call] Error:', err);
           cleanupCall();
         },
-        onStream: (remote) => setRemoteStream(remote)
+        onStream: (remote) => {
+          setRemoteStreams(prev => {
+            const next = new Map(prev);
+            next.set(callerId, remote);
+            return next;
+          });
+        }
       });
 
-      peerRef.current = peer;
+      peersRef.current.set(callerId, peer);
 
       // 4. Flush the buffer (Apply all signals that arrived before we hit answer)
-      if (signalBufferRef.current.length > 0) {
-        console.log(`[Call] Applying ${signalBufferRef.current.length} buffered signals`);
-        signalBufferRef.current.forEach(sig => peer.signal(sig));
-        signalBufferRef.current = [];
+      const buffer = signalBufferRef.current.get(callerId) || [];
+      if (buffer.length > 0) {
+        console.log(`[Call] Applying ${buffer.length} buffered signals for ${callerId}`);
+        buffer.forEach(sig => peer.signal(sig));
+        signalBufferRef.current.delete(callerId);
       }
 
       getSocket()?.emit('message_relay', {
@@ -926,20 +953,19 @@ export default function Home() {
   };
 
   const cleanupCall = () => {
-    if (peerRef.current) {
-      peerRef.current.destroy();
-      peerRef.current = null;
-    }
-    signalBufferRef.current = [];
+    peersRef.current.forEach(peer => peer.destroy());
+    peersRef.current.clear();
+    signalBufferRef.current.clear();
     if (localStream) {
       localStream.getTracks().forEach(track => track.stop());
       setLocalStream(null);
     }
-    setRemoteStream(null);
+    setRemoteStreams(new Map());
     setCallState('idle');
     setCallerId('');
     setIsMuted(false);
     setIsCameraOff(false);
+    setIsScreenSharing(false);
   };
 
   const toggleMic = () => {
@@ -972,7 +998,7 @@ export default function Home() {
         const screenTrack = screenStream.getVideoTracks()[0];
         const videoTrack = localStream.getVideoTracks()[0];
 
-        peerRef.current.replaceTrack(videoTrack, screenTrack, localStream);
+        peersRef.current.forEach(peer => peer.replaceTrack(videoTrack, screenTrack, localStream));
         setIsScreenSharing(true);
 
         screenTrack.onended = () => {
@@ -984,7 +1010,7 @@ export default function Home() {
         const newVideoTrack = newCameraStream.getVideoTracks()[0];
         const currentVideoTrack = localStream.getVideoTracks()[0];
 
-        peerRef.current.replaceTrack(currentVideoTrack, newVideoTrack, localStream);
+        peersRef.current.forEach(peer => peer.replaceTrack(currentVideoTrack, newVideoTrack, localStream));
         setIsScreenSharing(false);
         
         // Update local stream to keep audio but update video track
@@ -1023,6 +1049,17 @@ export default function Home() {
     } catch (err) {
       console.error('[Call] Camera switch failed:', err);
       alert('Could not switch camera. Device might not have a second camera.');
+    }
+  };
+
+  const handleTheaterSync = (data: any) => {
+    setTheaterSyncData(data);
+    if (callerId) {
+      getSocket()?.emit('message_relay', {
+        to: callerId,
+        type: 'theater_sync',
+        content: data
+      });
     }
   };
 
@@ -1485,6 +1522,12 @@ export default function Home() {
         isMuted={isMuted}
         isCameraOff={isCameraOff}
         isScreenSharing={isScreenSharing}
+        isTheaterOpen={isTheaterOpen}
+        isBackgroundBlurred={isBackgroundBlurred}
+        onToggleTheater={() => setIsTheaterOpen(!isTheaterOpen)}
+        onToggleBlur={() => setIsBackgroundBlurred(!isBackgroundBlurred)}
+        onTheaterSync={handleTheaterSync}
+        theaterSyncData={theaterSyncData}
       />
     </div>
   );

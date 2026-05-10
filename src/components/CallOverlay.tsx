@@ -136,8 +136,8 @@ export const CallOverlay = ({
           )}
         </div>
 
-        {/* Controls */}
-        <div className="mt-8 px-8 py-6 rounded-[2.5rem] glass-morphism flex items-center gap-4 md:gap-8 shadow-2xl border border-white/10 animate-scale-in">
+        {/* Controls Container */}
+        <div className="w-full max-w-fit mx-auto mb-6 md:mb-10 px-4 py-3 md:px-8 md:py-6 rounded-[2.5rem] glass-morphism flex items-center justify-center gap-2 md:gap-4 shadow-2xl border border-white/10 animate-scale-in overflow-x-auto no-scrollbar">
           {state === 'receiving' ? (
             <>
               <button 
@@ -156,58 +156,58 @@ export const CallOverlay = ({
           ) : (
             <>
               {/* Reaction Menu */}
-              <div className="flex items-center gap-2 bg-white/5 p-2 rounded-2xl border border-white/5">
+              <div className="flex items-center gap-1 md:gap-2 bg-white/5 p-1.5 md:p-2 rounded-2xl border border-white/5">
                 {emojis.map(e => (
                   <button 
                     key={e}
                     onClick={() => onSendReaction(e)}
-                    className="p-2 hover:bg-white/10 rounded-xl transition-all hover:scale-125 active:scale-90"
+                    className="p-1.5 md:p-2 hover:bg-white/10 rounded-xl transition-all hover:scale-125 active:scale-90"
                   >
-                    <span className="text-xl">{e}</span>
+                    <span className="text-lg md:text-xl">{e}</span>
                   </button>
                 ))}
               </div>
 
-              <div className="w-[1px] h-10 bg-white/10 hidden md:block" />
+              <div className="w-[1px] h-8 bg-white/10 hidden sm:block mx-1" />
 
               <button 
                 onClick={onToggleMic}
-                className={`p-5 rounded-2xl transition-all hover:scale-110 active:scale-95 border ${isMuted ? 'bg-red-500/20 text-red-500 border-red-500/20' : 'bg-white/5 text-zinc-400 hover:text-white border-white/5 shadow-lg shadow-white/5'}`}
+                className={`p-4 md:p-5 rounded-2xl transition-all hover:scale-110 active:scale-95 border ${isMuted ? 'bg-red-500/20 text-red-500 border-red-500/20' : 'bg-white/5 text-zinc-400 hover:text-white border-white/5 shadow-lg shadow-white/5'}`}
               >
-                {isMuted ? <MicOff className="w-6 h-6" /> : <Mic className="w-6 h-6 animate-pulse" />}
+                {isMuted ? <MicOff className="w-5 h-5 md:w-6 md:h-6" /> : <Mic className="w-5 h-5 md:w-6 md:h-6 animate-pulse" />}
               </button>
               
               {isVideo && (
                 <>
                   <button 
                     onClick={onToggleVideo}
-                    className={`p-5 rounded-2xl transition-all hover:scale-110 active:scale-95 border ${isCameraOff ? 'bg-red-500/20 text-red-500 border-red-500/20' : 'bg-white/5 text-zinc-400 hover:text-white border-white/5 shadow-lg shadow-white/5'}`}
+                    className={`p-4 md:p-5 rounded-2xl transition-all hover:scale-110 active:scale-95 border ${isCameraOff ? 'bg-red-500/20 text-red-500 border-red-500/20' : 'bg-white/5 text-zinc-400 hover:text-white border-white/5 shadow-lg shadow-white/5'}`}
                   >
-                    {isCameraOff ? <VideoOff className="w-6 h-6" /> : <Video className="w-6 h-6 animate-pulse" />}
+                    {isCameraOff ? <VideoOff className="w-5 h-5 md:w-6 md:h-6" /> : <Video className="w-5 h-5 md:w-6 md:h-6 animate-pulse" />}
                   </button>
 
                   <button 
                     onClick={onToggleScreenShare}
-                    className={`p-5 rounded-2xl transition-all hover:scale-110 active:scale-95 border ${isScreenSharing ? 'bg-purple-500/20 text-purple-500 border-purple-500/40 shadow-lg shadow-purple-500/20' : 'bg-white/5 text-zinc-400 hover:text-white border-white/5'}`}
+                    className={`p-4 md:p-5 rounded-2xl transition-all hover:scale-110 active:scale-95 border ${isScreenSharing ? 'bg-purple-500/20 text-purple-500 border-purple-500/40 shadow-lg shadow-purple-500/20' : 'bg-white/5 text-zinc-400 hover:text-white border-white/5'}`}
                   >
-                    {isScreenSharing ? <MonitorOff className="w-6 h-6" /> : <Monitor className="w-6 h-6" />}
+                    {isScreenSharing ? <MonitorOff className="w-5 h-5 md:w-6 md:h-6" /> : <Monitor className="w-5 h-5 md:w-6 md:h-6" />}
                   </button>
 
                   <button 
                     onClick={onSwitchCamera}
-                    className="p-5 rounded-2xl bg-white/5 text-zinc-400 hover:text-white border border-white/5 transition-all hover:scale-110 active:scale-95 shadow-lg shadow-white/5"
+                    className="p-4 md:p-5 rounded-2xl bg-white/5 text-zinc-400 hover:text-white border border-white/5 transition-all hover:scale-110 active:scale-95 shadow-lg shadow-white/5"
                     title="Switch Camera"
                   >
-                    <Camera className="w-6 h-6" />
+                    <Camera className="w-5 h-5 md:w-6 md:h-6" />
                   </button>
                 </>
               )}
 
               <button 
                 onClick={onEnd}
-                className="p-6 rounded-3xl bg-red-600 hover:bg-red-500 text-white transition-all hover:scale-110 active:scale-95 shadow-xl shadow-red-600/20 group"
+                className="p-5 md:p-6 rounded-3xl bg-red-600 hover:bg-red-500 text-white transition-all hover:scale-110 active:scale-95 shadow-xl shadow-red-600/20 group"
               >
-                <PhoneOff className="w-8 h-8 group-hover:rotate-12 transition-transform" />
+                <PhoneOff className="w-6 h-6 md:w-8 md:h-8 group-hover:rotate-12 transition-transform" />
               </button>
             </>
           )}
@@ -227,15 +227,31 @@ export const CallOverlay = ({
         }
         .local-video-pip {
           position: absolute;
-          bottom: 2rem;
-          right: 2rem;
-          width: 120px;
-          height: 180px;
-          border-radius: 1.5rem;
+          bottom: 1.5rem;
+          right: 1.5rem;
+          width: 90px;
+          height: 135px;
+          border-radius: 1.25rem;
           overflow: hidden;
           box-shadow: 0 20px 40px rgba(0,0,0,0.4);
           border: 2px solid rgba(255,255,255,0.1);
           z-index: 10;
+        }
+        @media (min-width: 768px) {
+          .local-video-pip {
+            bottom: 2rem;
+            right: 2rem;
+            width: 140px;
+            height: 210px;
+            border-radius: 1.5rem;
+          }
+        }
+        .no-scrollbar::-webkit-scrollbar {
+          display: none;
+        }
+        .no-scrollbar {
+          -ms-overflow-style: none;
+          scrollbar-width: none;
         }
         .mirror {
           transform: scaleX(-1);

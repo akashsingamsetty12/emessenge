@@ -989,7 +989,7 @@ export default function Home() {
   };
 
   const toggleScreenShare = async () => {
-    if (!localStream || !peerRef.current) return;
+    if (!localStream || peersRef.current.size === 0) return;
 
     try {
       if (!isScreenSharing) {
@@ -1023,7 +1023,7 @@ export default function Home() {
   };
 
   const switchCamera = async () => {
-    if (!localStream || !peerRef.current || isScreenSharing) return;
+    if (!localStream || peersRef.current.size === 0 || isScreenSharing) return;
 
     try {
       const newFacingMode = facingMode === 'user' ? 'environment' : 'user';
@@ -1035,7 +1035,7 @@ export default function Home() {
       const newVideoTrack = newStream.getVideoTracks()[0];
       const oldVideoTrack = localStream.getVideoTracks()[0];
 
-      peerRef.current.replaceTrack(oldVideoTrack, newVideoTrack, localStream);
+      peersRef.current.forEach(peer => peer.replaceTrack(oldVideoTrack, newVideoTrack, localStream));
       
       // Stop the old track
       oldVideoTrack.stop();
@@ -1054,21 +1054,22 @@ export default function Home() {
 
   const handleTheaterSync = (data: any) => {
     setTheaterSyncData(data);
-    if (callerId) {
+    peersRef.current.forEach((_, peerId) => {
       getSocket()?.emit('message_relay', {
-        to: callerId,
+        to: peerId,
         type: 'theater_sync',
         content: data
       });
-    }
+    });
   };
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
-    if (callState === 'active' && peerRef.current) {
+    if (callState === 'active' && peersRef.current.size > 0) {
       interval = setInterval(async () => {
-        if (peerRef.current) {
-          const stats = await peerRef.current.getStats();
+        const firstPeer = Array.from(peersRef.current.values())[0];
+        if (firstPeer) {
+          const stats = await firstPeer.getStats();
           setCallPing(stats.ping);
         }
       }, 2000);
@@ -1077,18 +1078,20 @@ export default function Home() {
   }, [callState]);
 
   const handleSendReaction = (emoji: string) => {
-    if (callerId) {
+    const id = uuidv4();
+    setCallReactions(prev => [...prev, { id, emoji }]);
+    
+    peersRef.current.forEach((_, peerId) => {
       getSocket()?.emit('message_relay', {
-        to: callerId,
+        to: peerId,
         type: 'call_reaction',
         content: { emoji }
       });
-      const id = uuidv4();
-      setCallReactions(prev => [...prev, { id, emoji }]);
-      setTimeout(() => {
-        setCallReactions(prev => prev.filter(r => r.id !== id));
-      }, 3000);
-    }
+    });
+
+    setTimeout(() => {
+      setCallReactions(prev => prev.filter(r => r.id !== id));
+    }, 3000);
   };
 
   useEffect(() => {
@@ -1508,7 +1511,7 @@ export default function Home() {
         isVideo={isVideoCall}
         callerInfo={callerInfo}
         localStream={localStream}
-        remoteStream={remoteStream}
+        remoteStreams={remoteStreams}
         onAnswer={answerCall}
         onDecline={declineCall}
         onEnd={endCall}

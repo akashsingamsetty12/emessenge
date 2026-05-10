@@ -62,11 +62,12 @@ export const CallOverlay = ({
   const recordedChunksRef = useRef<Blob[]>([]);
 
   const startRecording = () => {
-    if (!remoteStream && !localStream) return;
+    const firstRemoteStream = Array.from(remoteStreams.values())[0];
+    if (!firstRemoteStream && !localStream) return;
     
     // Combine streams if possible, or just record local/remote
     // For simplicity, we record the remote stream as it's the primary content
-    const streamToRecord = remoteStream || localStream;
+    const streamToRecord = firstRemoteStream || localStream;
     if (!streamToRecord) return;
 
     recordedChunksRef.current = [];

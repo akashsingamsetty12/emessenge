@@ -44,17 +44,35 @@ export const Theater = ({ onSync, syncData }: TheaterProps) => {
     }
   };
 
+  const getYoutubeId = (url: string) => {
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+    const match = url.match(regExp);
+    return (match && match[2].length === 11) ? match[2] : null;
+  };
+
+  const isYoutube = url && getYoutubeId(url);
+
   return (
     <div className="w-full h-full flex flex-col bg-black rounded-3xl overflow-hidden border border-white/10 shadow-2xl">
       <div className="flex-1 relative group">
         {url ? (
-          <video 
-            ref={videoRef}
-            src={url}
-            className="w-full h-full object-contain"
-            onPlay={() => setIsPlaying(true)}
-            onPause={() => setIsPlaying(false)}
-          />
+          isYoutube ? (
+            <iframe
+              className="w-full h-full"
+              src={`https://www.youtube.com/embed/${getYoutubeId(url)}?autoplay=1&mute=0`}
+              frameBorder="0"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+            ></iframe>
+          ) : (
+            <video 
+              ref={videoRef}
+              src={url}
+              className="w-full h-full object-contain"
+              onPlay={() => setIsPlaying(true)}
+              onPause={() => setIsPlaying(false)}
+            />
+          )
         ) : (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 text-zinc-500">
             <Youtube className="w-16 h-16 opacity-20" />
@@ -62,7 +80,7 @@ export const Theater = ({ onSync, syncData }: TheaterProps) => {
           </div>
         )}
         
-        {url && (
+        {url && !isYoutube && (
           <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
             <button 
               onClick={handlePlayPause}

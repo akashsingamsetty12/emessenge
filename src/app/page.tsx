@@ -815,7 +815,20 @@ export default function Home() {
 
   const startCall = async (isVideo: boolean) => {
     if (!activeChatId || !currentUser) return;
+    
+    console.log(`[Call] Starting ${isVideo ? 'video' : 'audio'} call to ${activeChatId}`);
+    
     try {
+      // Android WebView sometimes needs an explicit check or a simple getUserMedia call first
+      if (navigator.permissions && (navigator.permissions as any).query) {
+        try {
+          const cam = await navigator.permissions.query({ name: 'camera' as any });
+          const mic = await navigator.permissions.query({ name: 'microphone' as any });
+          console.log('[Call] Permissions:', { camera: cam.state, mic: mic.state });
+        } catch (e) {
+          console.warn('[Call] Permission query not supported');
+        }
+      }
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: isVideo ? {
           facingMode: 'user',
@@ -875,6 +888,8 @@ export default function Home() {
 
   const answerCall = async () => {
     if (!callerId || !currentUser) return;
+
+    console.log(`[Call] Answering ${isVideoCall ? 'video' : 'audio'} call from ${callerId}`);
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 

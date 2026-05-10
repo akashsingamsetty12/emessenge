@@ -71,7 +71,16 @@ export const CallOverlay = ({
     if (!streamToRecord) return;
 
     recordedChunksRef.current = [];
-    const options = { mimeType: 'video/webm;codecs=vp9,opus' };
+    
+    let mimeType = 'video/webm;codecs=vp9,opus';
+    if (!MediaRecorder.isTypeSupported(mimeType)) {
+      mimeType = 'video/webm;codecs=vp8,opus';
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'video/webm';
+      }
+    }
+
+    const options = { mimeType };
     
     try {
       const recorder = new MediaRecorder(streamToRecord, options);
@@ -355,8 +364,9 @@ const RemoteVideo = ({ stream }: { stream: MediaStream }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   
   useEffect(() => {
-    if (videoRef.current) {
+    if (videoRef.current && stream) {
       videoRef.current.srcObject = stream;
+      videoRef.current.play().catch(e => console.warn('Remote video play failed:', e));
     }
   }, [stream]);
 
@@ -366,6 +376,7 @@ const RemoteVideo = ({ stream }: { stream: MediaStream }) => {
       autoPlay
       playsInline
       className="remote-video"
+      style={{ width: '100%', height: '100%', objectFit: 'contain' }}
     />
   );
 };

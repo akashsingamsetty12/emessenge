@@ -158,16 +158,19 @@ export const CallOverlay = ({
           {isTheaterOpen ? (
             <Theater onSync={onTheaterSync} syncData={theaterSyncData} />
           ) : state === 'active' && isVideo ? (
-            <div className={`video-grid grid gap-2 p-2 ${remoteStreams.size > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
-              {Array.from(remoteStreams.entries()).map(([peerId, stream]) => (
-                <div key={peerId} className="relative w-full h-full rounded-2xl overflow-hidden bg-black">
-                  <RemoteVideo stream={stream} />
-                  <div className="absolute bottom-4 left-4 px-3 py-1 bg-black/40 backdrop-blur-md rounded-lg border border-white/10">
-                    <span className="text-[10px] text-zinc-300 font-bold uppercase tracking-wider">{peerId.slice(-4)}</span>
+            <div className="relative w-full h-full">
+              <div className={`video-grid grid gap-2 p-2 h-full w-full ${remoteStreams.size > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                {Array.from(remoteStreams.entries()).map(([peerId, stream]) => (
+                  <div key={peerId} className="relative w-full h-full rounded-2xl overflow-hidden bg-black">
+                    <RemoteVideo stream={stream} />
+                    <div className="absolute bottom-4 left-4 px-3 py-1 bg-black/40 backdrop-blur-md rounded-lg border border-white/10">
+                      <span className="text-[10px] text-zinc-300 font-bold uppercase tracking-wider">{peerId.slice(-4)}</span>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
               
+              {/* Local Video PIP - Now Outside the Grid */}
               <div className="local-video-pip shadow-2xl">
                 <video 
                   ref={localVideoCallback} 
@@ -365,18 +368,29 @@ const RemoteVideo = ({ stream }: { stream: MediaStream }) => {
   
   useEffect(() => {
     if (videoRef.current && stream) {
+      console.log('[RemoteVideo] Attaching stream:', stream.id);
       videoRef.current.srcObject = stream;
-      videoRef.current.play().catch(e => console.warn('Remote video play failed:', e));
+      videoRef.current.play().catch(e => {
+        console.warn('[RemoteVideo] Play failed, trying muted play:', e);
+        // Fallback: Some browsers require muted for autoplay even if user interacted
+        if (videoRef.current) {
+          videoRef.current.muted = true;
+          videoRef.current.play().catch(err => console.error('[RemoteVideo] Muted play also failed:', err));
+        }
+      });
     }
   }, [stream]);
 
   return (
     <video
+      key={stream.id}
       ref={videoRef}
       autoPlay
       playsInline
-      className="remote-video"
-      style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+      /* @ts-ignore */
+      webkit-playsinline="true"
+      muted={false}
+      className="remote-video w-full h-full object-contain bg-black"
     />
   );
 };

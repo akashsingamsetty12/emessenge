@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Play, Pause, RotateCcw, Youtube } from 'lucide-react';
+import { Play, Pause, Tv } from 'lucide-react';
 
 interface TheaterProps {
   onSync: (event: { type: string, time: number, url?: string }) => void;
@@ -75,7 +75,7 @@ export const Theater = ({ onSync, syncData }: TheaterProps) => {
           )
         ) : (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 text-zinc-500">
-            <Youtube className="w-16 h-16 opacity-20" />
+            <Tv className="w-16 h-16 opacity-20" />
             <p className="text-sm font-medium tracking-widest uppercase opacity-50">Theater Mode</p>
           </div>
         )}

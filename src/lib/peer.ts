@@ -44,11 +44,31 @@ export class PeerConnection {
     });
 
     this.peer.on('signal', options.onSignal);
-    this.peer.on('connect', options.onConnect);
+    this.peer.on('connect', () => {
+      console.log('[Peer] WebRTC Connected');
+      options.onConnect();
+    });
     this.peer.on('data', options.onData);
-    this.peer.on('error', options.onError);
+    this.peer.on('error', (err) => {
+      console.error('[Peer] WebRTC Error:', err);
+      options.onError(err);
+    });
     if (options.onStream) {
-      this.peer.on('stream', options.onStream);
+      this.peer.on('stream', (stream) => {
+        console.log('[Peer] Remote stream received, tracks:', stream.getTracks().length);
+        options.onStream!(stream);
+      });
+    }
+
+    // Diagnostic logging
+    if ((this.peer as any)._pc) {
+      const pc = (this.peer as any)._pc as RTCPeerConnection;
+      pc.oniceconnectionstatechange = () => {
+        console.log('[Peer] ICE Connection State:', pc.iceConnectionState);
+      };
+      pc.onsignalingstatechange = () => {
+        console.log('[Peer] Signaling State:', pc.signalingState);
+      };
     }
   }
 

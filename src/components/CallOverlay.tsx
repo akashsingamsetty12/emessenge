@@ -44,23 +44,25 @@ export const CallOverlay = ({
   isCameraOff,
   isScreenSharing
 }: CallOverlayProps) => {
-  const localVideoRef = useRef<HTMLVideoElement>(null);
-  const remoteVideoRef = useRef<HTMLVideoElement>(null);
-
-  useEffect(() => {
-    if (localVideoRef.current && localStream) {
-      localVideoRef.current.srcObject = localStream;
-      localVideoRef.current.play().catch(e => console.warn('Local play failed:', e));
+  const localVideoCallback = (node: HTMLVideoElement | null) => {
+    if (node && localStream) {
+      node.srcObject = localStream;
+      node.play().catch(e => console.warn('Local play failed:', e));
     }
-  }, [localStream, state]);
+  };
 
-  useEffect(() => {
-    if (remoteVideoRef.current && remoteStream) {
-      console.log('[Call] Attaching remote stream to video element...');
-      remoteVideoRef.current.srcObject = remoteStream;
-      remoteVideoRef.current.play().catch(e => console.warn('Remote play failed:', e));
+  const remoteVideoCallback = (node: HTMLVideoElement | null) => {
+    if (node && remoteStream) {
+      console.log('[Call] Attaching remote stream to video element. Tracks:', remoteStream.getTracks().length);
+      node.srcObject = remoteStream;
+      node.onloadedmetadata = () => {
+        console.log('[Call] Remote video metadata loaded, playing...');
+        node.play().catch(e => console.warn('Remote play failed:', e));
+      };
+    } else if (node) {
+      console.log('[Call] Remote video element rendered but remoteStream is missing.');
     }
-  }, [remoteStream, state]);
+  };
 
   if (state === 'idle') return null;
 
@@ -95,14 +97,14 @@ export const CallOverlay = ({
           {state === 'active' && isVideo ? (
             <div className="video-grid">
               <video 
-                ref={remoteVideoRef} 
+                ref={remoteVideoCallback} 
                 autoPlay 
                 playsInline 
                 className="remote-video"
               />
               <div className="local-video-pip">
                 <video 
-                  ref={localVideoRef} 
+                  ref={localVideoCallback} 
                   autoPlay 
                   playsInline 
                   muted 

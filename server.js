@@ -133,6 +133,30 @@ io.on("connection", (socket) => {
     callback(allUsers);
   });
 
+  socket.on("call_invite", ({ to, from, isVideo, callerName }) => {
+    const targetId = normalize(to);
+    const normalizedFrom = normalize(from);
+    console.log(`[Call] ${normalizedFrom} is inviting ${targetId} to a ${isVideo ? 'video' : 'audio'} call`);
+    
+    const delivered = broadcastToUser(targetId, "call_invite", { 
+      from: normalizedFrom, 
+      isVideo, 
+      callerName: callerName || normalizedFrom 
+    });
+
+    if (!delivered) {
+      console.log(`[Call] Target ${targetId} is offline. Should trigger push notification.`);
+      // TODO: Trigger FCM/WebPush here
+    }
+  });
+
+  socket.on("call_response", ({ to, from, response }) => {
+    const targetId = normalize(to);
+    const normalizedFrom = normalize(from);
+    console.log(`[Call] ${normalizedFrom} responded to call from ${targetId} with: ${response}`);
+    broadcastToUser(targetId, "call_response", { from: normalizedFrom, response });
+  });
+
   socket.on("disconnect", () => {
     if (userId && users.has(userId)) {
       users.get(userId).delete(socket.id);

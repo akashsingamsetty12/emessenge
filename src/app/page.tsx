@@ -57,6 +57,10 @@ export default function Home() {
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
+  const [callReactions, setCallReactions] = useState<Array<{ id: string, emoji: string }>>([]);
+  const [callPing, setCallPing] = useState(0);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const peerRef = useRef<PeerConnection | null>(null);
   const signalBufferRef = useRef<any[]>([]);
 
@@ -154,6 +158,28 @@ export default function Home() {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (currentUser && typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      const action = urlParams.get('action');
+      const from = urlParams.get('from');
+
+      if (action === 'answer' && from) {
+        console.log(`[Call] Handling background answer for: ${from}`);
+        setCallerId(from);
+        const contact = contacts.find(c => normalize(c.id) === normalize(from));
+        setCallerInfo({ 
+          username: contact?.username || from, 
+          profilePic: contact?.profilePic || '' 
+        });
+        setIsVideoCall(true); // Default to video for background answers
+        setCallState('receiving');
+        // Clean up URL
+        window.history.replaceState({}, '', '/');
+      }
+    }
+  }, [currentUser, contacts]);
 
   useEffect(() => {
     if (currentUser && typeof window !== 'undefined') {
@@ -287,6 +313,14 @@ export default function Home() {
       setIsConnected(false);
     });
 
+    socket.on('call_reconnect', () => {
+      if (callState === 'active' && peerRef.current) {
+        console.log('[Call] Peer requested reconnect. Restarting signaling...');
+        // In a real SFU this would be handled by the server, but for P2P we can re-initiate
+        if (callerId) startCall(isVideoCall);
+      }
+    });
+
     socket.on('signal', ({ from, signal }: { from: string, signal: any }) => {
       console.log(`[Call] Received signal from ${from}`);
       if (peerRef.current) {
@@ -295,6 +329,14 @@ export default function Home() {
         console.log('[Call] Buffering signal because peer is not ready');
         signalBufferRef.current.push(signal);
       }
+    });
+
+    socket.on('call_reaction', ({ emoji }: { emoji: string }) => {
+      const id = uuidv4();
+      setCallReactions(prev => [...prev, { id, emoji }]);
+      setTimeout(() => {
+        setCallReactions(prev => prev.filter(r => r.id !== id));
+      }, 3000);
     });
   };
 
@@ -360,6 +402,16 @@ export default function Home() {
       } else {
         cleanupCall();
       }
+      return;
+    }
+
+    if (type === 'call_reaction') {
+      const id = uuidv4();
+      const emoji = content.emoji;
+      setCallReactions(prev => [...prev, { id, emoji }]);
+      setTimeout(() => {
+        setCallReactions(prev => prev.filter(r => r.id !== id));
+      }, 3000);
       return;
     }
 
@@ -910,6 +962,98 @@ export default function Home() {
     }
   };
 
+  const toggleScreenShare = async () => {
+    if (!localStream || !peerRef.current) return;
+
+    try {
+      if (!isScreenSharing) {
+        // Start screen sharing
+        const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        const screenTrack = screenStream.getVideoTracks()[0];
+        const videoTrack = localStream.getVideoTracks()[0];
+
+        peerRef.current.replaceTrack(videoTrack, screenTrack, localStream);
+        setIsScreenSharing(true);
+
+        screenTrack.onended = () => {
+           toggleScreenShare(); // Revert to camera when user stops sharing via browser UI
+        };
+      } else {
+        // Stop screen sharing and revert to camera
+        const newCameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        const newVideoTrack = newCameraStream.getVideoTracks()[0];
+        const currentVideoTrack = localStream.getVideoTracks()[0];
+
+        peerRef.current.replaceTrack(currentVideoTrack, newVideoTrack, localStream);
+        setIsScreenSharing(false);
+        
+        // Update local stream to keep audio but update video track
+        const audioTrack = localStream.getAudioTracks()[0];
+        setLocalStream(new MediaStream([newVideoTrack, audioTrack]));
+      }
+    } catch (err) {
+      console.error('[Call] Screen share failed:', err);
+    }
+  };
+
+  const switchCamera = async () => {
+    if (!localStream || !peerRef.current || isScreenSharing) return;
+
+    try {
+      const newFacingMode = facingMode === 'user' ? 'environment' : 'user';
+      const newStream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: newFacingMode },
+        audio: true 
+      });
+      
+      const newVideoTrack = newStream.getVideoTracks()[0];
+      const oldVideoTrack = localStream.getVideoTracks()[0];
+
+      peerRef.current.replaceTrack(oldVideoTrack, newVideoTrack, localStream);
+      
+      // Stop the old track
+      oldVideoTrack.stop();
+      
+      // Update local state
+      const audioTrack = localStream.getAudioTracks()[0];
+      setLocalStream(new MediaStream([newVideoTrack, audioTrack]));
+      setFacingMode(newFacingMode);
+      
+      console.log(`[Call] Switched to ${newFacingMode} camera`);
+    } catch (err) {
+      console.error('[Call] Camera switch failed:', err);
+      alert('Could not switch camera. Device might not have a second camera.');
+    }
+  };
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (callState === 'active' && peerRef.current) {
+      interval = setInterval(async () => {
+        if (peerRef.current) {
+          const stats = await peerRef.current.getStats();
+          setCallPing(stats.ping);
+        }
+      }, 2000);
+    }
+    return () => clearInterval(interval);
+  }, [callState]);
+
+  const handleSendReaction = (emoji: string) => {
+    if (callerId) {
+      getSocket()?.emit('message_relay', {
+        to: callerId,
+        type: 'call_reaction',
+        content: { emoji }
+      });
+      const id = uuidv4();
+      setCallReactions(prev => [...prev, { id, emoji }]);
+      setTimeout(() => {
+        setCallReactions(prev => prev.filter(r => r.id !== id));
+      }, 3000);
+    }
+  };
+
   useEffect(() => {
     activeChatIdRef.current = activeChatId; // Sync ref for message processor
     if (activeChatId) {
@@ -1333,8 +1477,14 @@ export default function Home() {
         onEnd={endCall}
         onToggleMic={toggleMic}
         onToggleVideo={toggleVideo}
+        onToggleScreenShare={toggleScreenShare}
+        onSwitchCamera={switchCamera}
+        onSendReaction={handleSendReaction}
+        reactions={callReactions}
+        ping={callPing}
         isMuted={isMuted}
         isCameraOff={isCameraOff}
+        isScreenSharing={isScreenSharing}
       />
     </div>
   );

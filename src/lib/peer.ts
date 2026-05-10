@@ -74,6 +74,27 @@ export class PeerConnection {
     return this.peer?.destroyed || false;
   }
 
+  replaceTrack(oldTrack: MediaStreamTrack, newTrack: MediaStreamTrack, stream: MediaStream) {
+    if (this.peer) {
+      this.peer.replaceTrack(oldTrack, newTrack, stream);
+    }
+  }
+
+  async getStats() {
+    if (this.peer && (this.peer as any)._pc) {
+      const pc = (this.peer as any)._pc as RTCPeerConnection;
+      const stats = await pc.getStats();
+      let ping = 0;
+      stats.forEach(report => {
+        if (report.type === 'remote-candidate' && report.roundTripTime) {
+          ping = report.roundTripTime * 1000;
+        }
+      });
+      return { ping: Math.round(ping) };
+    }
+    return { ping: 0 };
+  }
+
   destroy() {
     this.peer?.destroy();
   }

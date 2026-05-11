@@ -118,12 +118,57 @@ export const CallOverlay = ({
     }
   };
 
-  const localVideoCallback = (node: HTMLVideoElement | null) => {
-    if (node && localStream) {
-      node.srcObject = localStream;
-      node.play().catch(e => console.warn('Local play failed:', e));
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+  const [pipPosition, setPipPosition] = useState({ x: 24, y: 24 }); // Bottom-right offsets
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const isMobile = typeof window !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
+  useEffect(() => {
+    if (localVideoRef.current && localStream) {
+      console.log('[CallOverlay] Attaching local stream');
+      localVideoRef.current.srcObject = localStream;
+      localVideoRef.current.play().catch(e => console.warn('Local play failed:', e));
     }
+  }, [localStream]);
+
+  const handleMouseDown = (e: React.MouseEvent | React.TouchEvent) => {
+    setIsDragging(true);
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    setDragStart({
+      x: clientX + pipPosition.x,
+      y: clientY + pipPosition.y
+    });
   };
+
+  useEffect(() => {
+    const handleMove = (e: MouseEvent | TouchEvent) => {
+      if (!isDragging) return;
+      const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+      const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+      
+      setPipPosition({
+        x: dragStart.x - clientX,
+        y: dragStart.y - clientY
+      });
+    };
+
+    const handleUp = () => setIsDragging(false);
+
+    if (isDragging) {
+      window.addEventListener('mousemove', handleMove);
+      window.addEventListener('mouseup', handleUp);
+      window.addEventListener('touchmove', handleMove);
+      window.addEventListener('touchend', handleUp);
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+      window.removeEventListener('touchmove', handleMove);
+      window.removeEventListener('touchend', handleUp);
+    };
+  }, [isDragging, dragStart]);
 
   if (state === 'idle') return null;
 
@@ -170,20 +215,30 @@ export const CallOverlay = ({
                 ))}
               </div>
               
-              {/* Local Video PIP - Now Outside the Grid */}
-              <div className="local-video-pip shadow-2xl">
+              {/* Local Video PIP - Now Draggable */}
+              <div 
+                className={`local-video-pip shadow-2xl cursor-move touch-none ${isDragging ? 'scale-105 opacity-80' : ''}`}
+                style={{ 
+                  bottom: `${pipPosition.y}px`, 
+                  right: `${pipPosition.x}px`,
+                  transition: isDragging ? 'none' : 'all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)'
+                }}
+                onMouseDown={handleMouseDown}
+                onTouchStart={handleMouseDown}
+              >
                 <video 
-                  ref={localVideoCallback} 
+                  ref={localVideoRef} 
                   autoPlay 
                   playsInline 
                   muted 
-                  className={`w-full h-full object-contain mirror bg-zinc-900 ${isBackgroundBlurred ? 'blur-md scale-110' : ''}`}
+                  className={`w-full h-full object-cover mirror bg-zinc-900 ${isBackgroundBlurred ? 'blur-md scale-110' : ''}`}
                 />
                 {isCameraOff && (
                    <div className="absolute inset-0 bg-zinc-800 flex items-center justify-center">
                     <VideoOff className="w-8 h-8 text-zinc-600" />
                    </div>
                 )}
+                <div className="absolute inset-0 border-2 border-white/10 pointer-events-none rounded-[1.25rem] md:rounded-[1.5rem]"></div>
               </div>
             </div>
           ) : (
@@ -255,12 +310,14 @@ export const CallOverlay = ({
                     {isCameraOff ? <VideoOff className="w-5 h-5 md:w-6 md:h-6" /> : <Video className="w-5 h-5 md:w-6 md:h-6 animate-pulse" />}
                   </button>
 
-                  <button 
-                    onClick={onToggleScreenShare}
-                    className={`p-4 md:p-5 rounded-2xl transition-all hover:scale-110 active:scale-95 border ${isScreenSharing ? 'bg-purple-500/20 text-purple-500 border-purple-500/40 shadow-lg shadow-purple-500/20' : 'bg-white/5 text-zinc-400 hover:text-white border-white/5'}`}
-                  >
-                    {isScreenSharing ? <MonitorOff className="w-5 h-5 md:w-6 md:h-6" /> : <Monitor className="w-5 h-5 md:w-6 md:h-6" />}
-                  </button>
+                  {!isMobile && (
+                    <button 
+                      onClick={onToggleScreenShare}
+                      className={`p-4 md:p-5 rounded-2xl transition-all hover:scale-110 active:scale-95 border ${isScreenSharing ? 'bg-purple-500/20 text-purple-500 border-purple-500/40 shadow-lg shadow-purple-500/20' : 'bg-white/5 text-zinc-400 hover:text-white border-white/5'}`}
+                    >
+                      {isScreenSharing ? <MonitorOff className="w-5 h-5 md:w-6 md:h-6" /> : <Monitor className="w-5 h-5 md:w-6 md:h-6" />}
+                    </button>
+                  )}
 
                   <button 
                     onClick={onSwitchCamera}

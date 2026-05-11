@@ -829,11 +829,15 @@ export default function Home() {
           console.warn('[Call] Permission query not supported');
         }
       }
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('WebRTC is not supported in this browser or context (needs HTTPS)');
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: isVideo ? {
-          facingMode: 'user',
-          width: { ideal: 640 },
-          height: { ideal: 480 }
+          facingMode: facingMode,
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
         } : false, 
         audio: {
           echoCancellation: true,
@@ -880,9 +884,9 @@ export default function Home() {
           profilePic: currentUser.profilePic 
         }
       });
-    } catch (err) {
+    } catch (err: any) {
       console.error('[Call] Failed to get media:', err);
-      alert('Could not access camera/microphone');
+      alert(`Call Failed: ${err.message || 'Could not access camera/microphone'}. Ensure you are using HTTPS and have granted permissions.`);
     }
   };
 
@@ -894,9 +898,9 @@ export default function Home() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: isVideoCall ? {
-          facingMode: 'user',
-          width: { ideal: 640 },
-          height: { ideal: 480 }
+          facingMode: facingMode,
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
         } : false, 
         audio: true 
       });
@@ -939,8 +943,9 @@ export default function Home() {
         type: 'call_response',
         content: 'accepted'
       });
-    } catch (err) {
+    } catch (err: any) {
       console.error('[Call] Failed to get media:', err);
+      alert(`Answer Failed: ${err.message || 'Permissions denied'}.`);
       cleanupCall();
     }
   };

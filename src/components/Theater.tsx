@@ -14,15 +14,19 @@ export const Theater = ({ onSync, syncData }: TheaterProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
-    if (syncData && videoRef.current) {
-      if (syncData.type === 'play') {
-        videoRef.current.currentTime = syncData.time;
-        videoRef.current.play();
-        setIsPlaying(true);
-      } else if (syncData.type === 'pause') {
-        videoRef.current.currentTime = syncData.time;
-        videoRef.current.pause();
-        setIsPlaying(false);
+    if (syncData) {
+      if (syncData.type === 'load' && syncData.url) {
+        setUrl(syncData.url);
+      } else if (videoRef.current) {
+        if (syncData.type === 'play') {
+          videoRef.current.currentTime = syncData.time;
+          videoRef.current.play().catch(e => console.warn('Sync play failed:', e));
+          setIsPlaying(true);
+        } else if (syncData.type === 'pause') {
+          videoRef.current.currentTime = syncData.time;
+          videoRef.current.pause();
+          setIsPlaying(false);
+        }
       }
     }
   }, [syncData]);

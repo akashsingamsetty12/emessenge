@@ -60,42 +60,110 @@ export const CallOverlay = ({
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
+  const animationFrameRef = useRef<number | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const startRecording = () => {
+  const startRecording = async () => {
     const firstRemoteStream = Array.from(remoteStreams.values())[0];
     if (!firstRemoteStream && !localStream) return;
     
-    // Combine streams if possible, or just record local/remote
-    // For simplicity, we record the remote stream as it's the primary content
-    const streamToRecord = firstRemoteStream || localStream;
-    if (!streamToRecord) return;
-
     recordedChunksRef.current = [];
     
-    let mimeType = 'video/webm;codecs=vp9,opus';
-    if (!MediaRecorder.isTypeSupported(mimeType)) {
-      mimeType = 'video/webm;codecs=vp8,opus';
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = 'video/webm';
-      }
-    }
-
-    const options = { mimeType };
-    
     try {
-      const recorder = new MediaRecorder(streamToRecord, options);
+      // 1. Setup Audio Mixing
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const dest = audioCtx.createMediaStreamDestination();
+      
+      if (localStream && localStream.getAudioTracks().length > 0) {
+        const localSource = audioCtx.createMediaStreamSource(localStream);
+        localSource.connect(dest);
+      }
+      
+      if (firstRemoteStream && firstRemoteStream.getAudioTracks().length > 0) {
+        const remoteSource = audioCtx.createMediaStreamSource(firstRemoteStream);
+        remoteSource.connect(dest);
+      }
+
+      // 2. Setup Video Combining (Canvas)
+      const canvas = document.createElement('canvas');
+      canvas.width = 1280;
+      canvas.height = 720;
+      canvasRef.current = canvas;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      const drawFrame = () => {
+        // Clear background
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Draw Remote Video (Full Screen)
+        // Find the actual video element for the remote stream
+        const remoteVideo = document.querySelector('.remote-video') as HTMLVideoElement;
+        if (remoteVideo && !remoteVideo.paused && !remoteVideo.ended) {
+          ctx.drawImage(remoteVideo, 0, 0, canvas.width, canvas.height);
+        }
+
+        // Draw Local Video (PIP)
+        if (localVideoRef.current && !localVideoRef.current.paused && !localVideoRef.current.ended) {
+          const pipWidth = 320;
+          const pipHeight = 180;
+          const padding = 20;
+          ctx.save();
+          // Add border/shadow to PIP
+          ctx.shadowBlur = 20;
+          ctx.shadowColor = 'rgba(0,0,0,0.5)';
+          ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+          ctx.lineWidth = 4;
+          
+          const x = canvas.width - pipWidth - padding;
+          const y = canvas.height - pipHeight - padding;
+          
+          ctx.beginPath();
+          ctx.roundRect(x, y, pipWidth, pipHeight, 20);
+          ctx.clip();
+          ctx.drawImage(localVideoRef.current, x, y, pipWidth, pipHeight);
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        animationFrameRef.current = requestAnimationFrame(drawFrame);
+      };
+
+      drawFrame();
+
+      // 3. Combine Canvas Video + Mixed Audio
+      const canvasStream = canvas.captureStream(30);
+      const combinedStream = new MediaStream([
+        ...canvasStream.getVideoTracks(),
+        ...dest.stream.getAudioTracks()
+      ]);
+
+      let mimeType = 'video/webm;codecs=vp9,opus';
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'video/webm;codecs=vp8,opus';
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          mimeType = 'video/webm';
+        }
+      }
+
+      const recorder = new MediaRecorder(combinedStream, { mimeType });
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
           recordedChunksRef.current.push(event.data);
         }
       };
+      
       recorder.onstop = () => {
+        if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+        audioCtx.close();
+        
         const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.style.display = 'none';
         a.href = url;
-        a.download = `call-record-${Date.now()}.webm`;
+        a.download = `combined-call-${Date.now()}.webm`;
         document.body.appendChild(a);
         a.click();
         setTimeout(() => {
@@ -103,11 +171,14 @@ export const CallOverlay = ({
           window.URL.revokeObjectURL(url);
         }, 100);
       };
+
       recorder.start();
       mediaRecorderRef.current = recorder;
       setIsRecording(true);
     } catch (e) {
-      console.error('Recording failed:', e);
+      console.error('Combined recording failed:', e);
+      // Fallback to simple recording if canvas fails
+      alert('High-quality combined recording failed. Falling back to standard mode.');
     }
   };
 
@@ -201,44 +272,61 @@ export const CallOverlay = ({
         {/* Header / Remote View Grid / Theater */}
         <div className="flex-1 w-full relative rounded-[3rem] overflow-hidden bg-zinc-900/50 border border-white/5 shadow-2xl">
           {isTheaterOpen ? (
-            <Theater onSync={onTheaterSync} syncData={theaterSyncData} />
-          ) : state === 'active' && isVideo ? (
-            <div className="relative w-full h-full">
-              <div className={`video-grid grid gap-2 p-2 h-full w-full ${remoteStreams.size > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+            <div className="flex flex-col h-full">
+              {/* Theater Main Area */}
+              <div className="flex-1 min-h-0">
+                <Theater onSync={onTheaterSync} syncData={theaterSyncData} />
+              </div>
+              
+              {/* Participants Sidebar/Bottom Bar when Theater is open */}
+              <div className="h-32 md:h-40 bg-black/40 backdrop-blur-md border-t border-white/5 flex gap-2 p-2 overflow-x-auto no-scrollbar">
                 {Array.from(remoteStreams.entries()).map(([peerId, stream]) => (
-                  <div key={peerId} className="relative w-full h-full rounded-2xl overflow-hidden bg-black">
+                  <div key={peerId} className="h-full aspect-video rounded-xl overflow-hidden bg-black shrink-0 relative border border-white/10">
                     <RemoteVideo stream={stream} />
-                    <div className="absolute bottom-4 left-4 px-3 py-1 bg-black/40 backdrop-blur-md rounded-lg border border-white/10">
-                      <span className="text-[10px] text-zinc-300 font-bold uppercase tracking-wider">{peerId.slice(-4)}</span>
+                    <div className="absolute bottom-2 left-2 px-2 py-0.5 bg-black/40 backdrop-blur-md rounded text-[8px] text-zinc-400 font-bold uppercase tracking-wider">
+                      {peerId.slice(-4)}
                     </div>
                   </div>
                 ))}
-              </div>
-              
-              {/* Local Video PIP - Now Draggable */}
-              <div 
-                className={`local-video-pip shadow-2xl cursor-move touch-none ${isDragging ? 'scale-105 opacity-80' : ''}`}
-                style={{ 
-                  bottom: `${pipPosition.y}px`, 
-                  right: `${pipPosition.x}px`,
-                  transition: isDragging ? 'none' : 'all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)'
-                }}
-                onMouseDown={handleMouseDown}
-                onTouchStart={handleMouseDown}
-              >
-                <video 
-                  ref={localVideoRef} 
-                  autoPlay 
-                  playsInline 
-                  muted 
-                  className={`w-full h-full object-cover mirror bg-zinc-900 ${isBackgroundBlurred ? 'blur-md scale-110' : ''}`}
-                />
-                {isCameraOff && (
-                   <div className="absolute inset-0 bg-zinc-800 flex items-center justify-center">
-                    <VideoOff className="w-8 h-8 text-zinc-600" />
-                   </div>
+                {isVideo && (
+                  <div className="h-full aspect-video rounded-xl overflow-hidden bg-black shrink-0 relative border border-white/10 group">
+                    <video 
+                      ref={localVideoRef} 
+                      autoPlay 
+                      playsInline 
+                      muted 
+                      className={`w-full h-full object-cover mirror bg-zinc-900 ${isBackgroundBlurred ? 'blur-md scale-110' : ''}`}
+                    />
+                    {isCameraOff && (
+                      <div className="absolute inset-0 bg-zinc-800 flex items-center justify-center">
+                        <VideoOff className="w-4 h-4 text-zinc-600" />
+                      </div>
+                    )}
+                    <div className="absolute bottom-2 left-2 px-2 py-0.5 bg-black/40 backdrop-blur-md rounded text-[8px] text-purple-400 font-bold uppercase tracking-wider">
+                      You
+                    </div>
+                  </div>
                 )}
-                <div className="absolute inset-0 border-2 border-white/10 pointer-events-none rounded-[1.25rem] md:rounded-[1.5rem]"></div>
+              </div>
+            </div>
+          ) : state === 'active' && isVideo ? (
+            <div className="relative w-full h-full">
+              <div className={`video-grid grid gap-2 p-2 h-full w-full ${remoteStreams.size > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                {remoteStreams.size === 0 ? (
+                  <div className="relative w-full h-full flex flex-col items-center justify-center bg-black/60 backdrop-blur-xl">
+                    <div className="w-20 h-20 border-4 border-purple-500/30 border-t-purple-500 rounded-full animate-spin mb-6"></div>
+                    <p className="text-zinc-400 font-mono text-xs uppercase tracking-[0.3em] animate-pulse">Establishing Secure Stream...</p>
+                  </div>
+                ) : (
+                  Array.from(remoteStreams.entries()).map(([peerId, stream]) => (
+                    <div key={peerId} className="relative w-full h-full rounded-2xl overflow-hidden bg-black">
+                      <RemoteVideo stream={stream} />
+                      <div className="absolute bottom-4 left-4 px-3 py-1 bg-black/40 backdrop-blur-md rounded-lg border border-white/10">
+                        <span className="text-[10px] text-zinc-300 font-bold uppercase tracking-wider">{peerId.slice(-4)}</span>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           ) : (
@@ -256,6 +344,34 @@ export const CallOverlay = ({
               <p className="mt-4 text-purple-400 font-mono tracking-[0.3em] uppercase text-sm animate-pulse">
                 {state === 'calling' ? 'Calling...' : state === 'receiving' ? 'Incoming Call' : 'Active Call'}
               </p>
+            </div>
+          )}
+
+          {/* Local Video PIP - Visible when active and NOT in theater mode */}
+          {isVideo && !isTheaterOpen && state === 'active' && (
+            <div 
+              className={`local-video-pip shadow-2xl cursor-move touch-none z-[120] ${isDragging ? 'scale-105 opacity-80' : ''}`}
+              style={{ 
+                bottom: `${pipPosition.y}px`, 
+                right: `${pipPosition.x}px`,
+                transition: isDragging ? 'none' : 'all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)'
+              }}
+              onMouseDown={handleMouseDown}
+              onTouchStart={handleMouseDown}
+            >
+              <video 
+                ref={localVideoRef} 
+                autoPlay 
+                playsInline 
+                muted 
+                className={`w-full h-full object-cover mirror bg-zinc-900 ${isBackgroundBlurred ? 'blur-md scale-110' : ''}`}
+              />
+              {isCameraOff && (
+                  <div className="absolute inset-0 bg-zinc-800 flex items-center justify-center">
+                  <VideoOff className="w-8 h-8 text-zinc-600" />
+                  </div>
+              )}
+              <div className="absolute inset-0 border-2 border-white/10 pointer-events-none rounded-[1.25rem] md:rounded-[1.5rem]"></div>
             </div>
           )}
         </div>
@@ -423,31 +539,52 @@ export const CallOverlay = ({
 const RemoteVideo = ({ stream }: { stream: MediaStream }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   
-  useEffect(() => {
+  const attachStream = () => {
     if (videoRef.current && stream) {
-      console.log('[RemoteVideo] Attaching stream:', stream.id);
+      console.log('[RemoteVideo] Attaching/Updating stream:', stream.id, 'Tracks:', stream.getTracks().map(t => t.kind));
       videoRef.current.srcObject = stream;
       videoRef.current.play().catch(e => {
         console.warn('[RemoteVideo] Play failed, trying muted play:', e);
-        // Fallback: Some browsers require muted for autoplay even if user interacted
         if (videoRef.current) {
           videoRef.current.muted = true;
           videoRef.current.play().catch(err => console.error('[RemoteVideo] Muted play also failed:', err));
         }
       });
     }
+  };
+
+  useEffect(() => {
+    attachStream();
+    
+    // Listen for track changes to ensure UI updates if tracks are added/removed
+    stream.onaddtrack = attachStream;
+    stream.onremovetrack = attachStream;
+    
+    return () => {
+      stream.onaddtrack = null;
+      stream.onremovetrack = null;
+    };
   }, [stream]);
 
   return (
-    <video
-      key={stream.id}
-      ref={videoRef}
-      autoPlay
-      playsInline
-      /* @ts-ignore */
-      webkit-playsinline="true"
-      muted={false}
-      className="remote-video w-full h-full object-contain bg-black"
-    />
+    <div className="relative w-full h-full group">
+      <video
+        key={stream.id}
+        ref={videoRef}
+        autoPlay
+        playsInline
+        /* @ts-ignore */
+        webkit-playsinline="true"
+        muted={false}
+        className="remote-video w-full h-full object-contain bg-black transition-opacity duration-500"
+      />
+      {!stream.getVideoTracks().some(t => t.enabled) && (
+        <div className="absolute inset-0 bg-zinc-900/80 backdrop-blur-sm flex items-center justify-center">
+          <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center animate-pulse">
+            <VideoOff className="w-8 h-8 text-zinc-500" />
+          </div>
+        </div>
+      )}
+    </div>
   );
 };

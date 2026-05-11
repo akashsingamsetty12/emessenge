@@ -430,6 +430,12 @@ export default function Home() {
       return;
     }
 
+    if (type === 'theater_sync') {
+      setTheaterSyncData(content);
+      if (content.type === 'load') setIsTheaterOpen(true);
+      return;
+    }
+
     if (type === 'key_exchange') {
       if (currentUser) handleIdentityReceived(from, content || payload, currentUser);
       return;
